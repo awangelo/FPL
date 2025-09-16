@@ -84,7 +84,60 @@ def addPontos (p1 p2 : Ponto) : Ponto :=
   { x := p1.x + p2.x, y := p1.y + p2.y }
 
 #check { x := 0.0, y := 0.0 }
-#check { x := 0.0, y := 0.0 : Ponto}
+#check { x := 0.0, y := 0.0 : Ponto }
 
 
 -- 1.4.1. Updating Structures
+
+-- Aloca nova estrutura, copia TODOS os valores e define `x := 0`
+-- Altera o `x` duas vezes.
+def zeroX (p : Ponto) : Ponto :=
+  { x := 0, y := p.y }
+
+-- Copia apenas os valores que nao serao alterados ou seja:
+-- `A new instance of the structure is created in which every`
+-- `field not specifiedis copied from the value that is being updated,`
+-- `and the specified fields are replaced with their new values.`
+def zeroXIdiomatic (p : Ponto) : Ponto :=
+  { p with x := 0 }
+
+def quatroCinco : Ponto :=
+  { x := 4, y := 5 }
+
+#eval quatroCinco
+#eval zeroX quatroCinco
+#eval zeroXIdiomatic quatroCinco
+
+
+-- 1.4.2. Behind the Scenes
+
+#check Ponto.mk 7 3
+
+structure OutroPonto where
+  -- Muda o nome do contrutor padrao
+  ponto ::
+  x : Float
+  y : Float
+deriving Repr
+
+#eval OutroPonto.ponto 3 3
+
+-- o `estrutura.x` vira `ContrutorDaEstrutura.x estrutura`,
+#eval quatroCinco.x == Ponto.x quatroCinco
+
+-- `aplicaF` definido no namespace de `Ponto`
+def Ponto.aplicaF (f : Float → Float) (p : Ponto) : Ponto :=
+  { x := f p.x, y := f p.y }
+
+def aplicaF (f : Float → Float) (p : Ponto) : Ponto :=
+  { x := f p.x, y := f p.y }
+
+def doubleIt (x : Float) : Float :=
+  x * x
+-- Mesmo o argumento Ponto vindo depois do argumento que eh a funcao, pode user a dot notation
+#eval quatroCinco.aplicaF doubleIt
+-- Sem usar dot notation:
+#eval aplicaF doubleIt quatroCinco
+
+
+-- 1.4.3. Exercises
