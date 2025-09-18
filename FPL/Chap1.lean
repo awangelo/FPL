@@ -128,7 +128,7 @@ deriving Repr
 -- `aplicaF` definido no namespace de `Ponto`
 def Ponto.aplicaF (f : Float → Float) (p : Ponto) : Ponto :=
   { x := f p.x, y := f p.y }
-
+-- Ambos tem a mesma assinatura
 def aplicaF (f : Float → Float) (p : Ponto) : Ponto :=
   { x := f p.x, y := f p.y }
 
@@ -141,3 +141,93 @@ def doubleIt (x : Float) : Float :=
 
 
 -- 1.4.3. Exercises
+
+structure RectangularPrism where
+  h : Float
+  w : Float
+  d : Float
+deriving Repr
+
+def RectangularPrism.volume (p : RectangularPrism) : Float :=
+  p.h * p.w * p.d
+
+structure Segment where
+  p₁ : Ponto
+  p₂ : Ponto
+deriving Repr
+
+def Segment.length (s : Segment) : Float :=
+  Float.sqrt ((s.p₂.x - s.p₁.x)^2 + (s.p₂.y - s.p₁.y)^2)
+
+-- Which names are introduced by the declaration of RectangularPrism?
+-- RectangularPrism.mk
+-- RectangularPrism.h
+-- RectangularPrism.w
+-- RectangularPrism.d
+
+-- Which names are introduced by the following declarations of Hamster and Book? What are their types?
+-- Hamster.mk : String → Bool → Hamster
+-- Hamster.name : Hamster → String
+-- Hamster.fluffy : Hamster → Bool
+-- Book.makeBook : String → String → Float → Book
+-- Book.title : Book → String
+-- Book.author : Book → String
+-- Book.price : Book → Float
+
+
+-- 1.5. Datatypes and Patterns
+
+-- Sum types
+inductive Boole where
+  | false : Boole
+  | true : Boole
+
+inductive Natu where
+  | zero : Natu
+  | succ (n : Natu) : Natu
+
+-- 1.5.1. Pattern Matching
+
+def isZero (n : Natu) : Bool :=
+  match n with
+  | Natu.zero => true
+  | Natu.succ k => false
+
+def pred (n : Natu) : Natu :=
+  match n with
+  | Natu.zero => Natu.zero
+  | Natu.succ k => k
+-- `k` eh o argumento que o construtor `succ` de `Natu.succ` recebe
+
+-- Pattern matching tambem funciona com structures
+def primeiro (p : RectangularPrism) : Float :=
+  match p with
+  | { h := h, w := _, d := _ } => h
+
+-- 1.5.2. Recursive Functions
+
+def even (n : Nat) : Bool :=
+  match n with
+  | Nat.zero => true
+  | Nat.succ k => not (even k)
+
+def evenLoops (n : Nat) : Bool :=
+  match n with
+  | Nat.zero => true
+  | Nat.succ k => not (evenLoops n)
+-- Recursao sem 'diminuir'
+
+def adicao (x y : Nat) : Nat :=
+  match y with
+  | Nat.zero   => x
+  | Nat.succ k => Nat.succ (adicao x k)
+-- adicao 3 2
+--        x y
+-- 3  Nat.succ 1
+-- 3  Nat.succ Nat.succ Nat.zero
+-- Acho o Nat.zero, retorna o `x`
+-- Nat.succ Nat.succ 3
+-- 5
+
+
+-- 1.6. Polymorphism
