@@ -231,3 +231,157 @@ def adicao (x y : Nat) : Nat :=
 
 
 -- 1.6. Polymorphism
+
+structure PolPonto (α : Type) where
+  x : α
+  y : α
+deriving Repr
+
+def origemNat : (PolPonto Nat) :=
+  { x := 0, y := 0 }
+
+def replaceX (α : Type) (point : PolPonto α) (newX : α) : PolPonto α :=
+  { point with x := newX }
+
+def PolPonto.replaceXIdiomatic (point : PolPonto α) (newX : α) :=
+  { point with x := newX }
+
+#check (replaceX)
+#check replaceX Nat
+
+#eval replaceX Nat origemNat 8
+#eval PolPonto.replaceXIdiomatic origemNat 1
+
+inductive Sinal where
+  | mais
+  | menos
+
+def natOuInt (s : Sinal) : Type :=
+  match s with
+  | Sinal.mais => Nat
+  | Sinal.menos => Int
+
+def exemploMais : natOuInt Sinal.mais := (10 : Nat)
+def exemploErrado : natOuInt Sinal.mais := (-1 : Int)
+
+#eval exemploMais
+
+
+-- 1.6.1. Linked Lists
+
+def tamanhoLivro (α : Type) (xs : List α) : Nat :=
+  match xs with
+  | List.nil => Nat.zero
+  | List.cons _ ys => Nat.succ (tamanhoLivro α ys)
+
+def len (α : Type) (xs : List α) : Nat :=
+  match xs with
+  | [] => 0
+  | y :: ys => Nat.succ (len α ys)
+
+def List.tamanho (xs : List α) : Nat :=
+  match xs with
+  | []      => 0
+  | _ :: xs => 1 + tamanho xs
+
+#eval [1, 3].tamanho
+
+
+-- 1.6.2. Implicit Arguments
+
+-- `{}` sao usados para argumentos implicitos
+-- {α : Type}
+
+
+-- 1.6.3. More Built-In Datatypes
+
+/- 1.6.3.1. Option -/
+
+/--
+Caso 1:
+┌──Option┐
+│        │
+│  none  │
+│        │
+└────────┘
+ou
+
+Caso 2:
+┌────Option┐
+│  ┌some┐  │
+│  │ α  │  │
+│  └────┘  │
+└──────────┘
+-/
+inductive Opt (α : Type) where
+  | none : Opt α
+  | some (val : α) : Opt α
+
+-- head para listas que NAO sao nulas (precisa de uma prova)
+#check List.head
+
+-- head! para para listas que podem ser nulas (panic quando nula)
+#check List.head!
+
+-- head? para para listas que podem ser nulas (retorna Option)
+#check List.head?
+
+-- headD para para listas que podem ser nulas (retorna um valor default)
+#check List.headD
+
+def List.cabeca? (xs : List α) : Opt α :=
+  match xs with
+  | []     => Opt.none
+  | y :: _ => Opt.some y
+
+#eval [].head? (α := Int)
+
+/- 1.6.3.2. Prod -/
+
+structure Produto (α : Type) (β : Type) where
+  fst : α
+  snd : β
+
+def meuProduto : Bool × Int := (true, 1)
+#eval meuProduto
+
+-- Mesma coisa
+def sevens : String × Int × Nat := ("VII", 7, 4 + 3)
+def sevenss : String × (Int × Nat) := ("VII", (7, 4 + 3))
+
+/- 1.6.3.3. Sum -/
+-- Either
+
+-- Mesma coisa
+#check Sum String String
+#check String ⊕ String
+
+-- Exemplo de numeros positivos e negativos
+
+def LoginResult : Type := String ⊕ Nat
+-- String = mensagem de erro (inl)
+-- Nat = ID do usuário logado (inr)
+
+def tentativasLogin : List LoginResult :=
+  [Sum.inl "Senha incorreta",           -- erro
+   Sum.inr 123,                         -- sucesso (user ID 123)
+   Sum.inl "Usuário não encontrado",    -- erro
+   Sum.inr 456,                         -- sucesso (user ID 456)
+   Sum.inl "Conta bloqueada"]           -- erro
+
+-- Evitar Sum generico (nao da pra sber qual eh qual)
+def PetName : Type := String ⊕ String
+-- Um tipo eh melhor:
+inductive PetNamee where
+  | dog : String → PetNamee
+  | cat : String → PetNamee
+
+/- 1.6.3.4. Unit -/
+#check Unit
+#check ()
+
+-- Funcoes de zero argumento podem receber Unit.
+-- Parecido com void.
+-- * Monadic actions that return `Unit` have side effects without computing values *
+
+/- 1.6.3.5. Empty -/
