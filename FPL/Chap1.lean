@@ -377,6 +377,7 @@ inductive PetNamee where
   | cat : String → PetNamee
 
 /- 1.6.3.4. Unit -/
+
 #check Unit
 #check ()
 
@@ -385,3 +386,39 @@ inductive PetNamee where
 -- * Monadic actions that return `Unit` have side effects without computing values *
 
 /- 1.6.3.5. Empty -/
+
+#check Empty
+
+-- Representa um valor impossivel, pois nao tem contrutor.
+-- Ao contrario do `Unit` (`()`) que eh vazio mas possivel.
+
+/- 1.6.3.6. Naming: Sums, Products, and Units -/
+
+-- PRODUCT TYPES (×): Um construtor com multiplos argumentos
+-- Bool tem 2 valores, entao Bool × Bool tem 2 * 2 = 4 possiveis valores
+-- Unit tem 1 valor, entao Bool × Unit tem 2 * 1 = 2 valores
+#check (true, ())
+#check (false, ())
+
+#check (true, true)
+#check (true, false)
+#check (false, true)
+#check (false, false)
+
+-- SUM TYPES (⊕): Multiplos construtores (escolhas)
+-- Se α tem n valores e β tem k valores, então α ⊕ β tem n + k valores
+-- Bool ⊕ Unit tem 2 + 1 = 3 valores
+#check Sum.inl true
+#check Sum.inl false
+#check Sum.inr ()
+
+-- Bool ⊕ Bool tem 2 + 2 = 4 valores
+#check Sum.inl true
+#check Sum.inr true
+#check Sum.inl false
+#check Sum.inr false
+
+-- Sum = adição (escolha entre opcoes)
+-- Product = multiplicação (combinacao)
+
+/- 1.6.4. Messages You May Meet -/
