@@ -421,4 +421,182 @@ inductive PetNamee where
 -- Sum = adição (escolha entre opcoes)
 -- Product = multiplicação (combinacao)
 
+
+/-
+RESUMO:
+Tipos com multiplos contrutores sao chamados `sum types (α ⊕ β)`,
+tipos com um unico contrutor sao chamados `product types (α × β)`.
+  assim, (Bool ⊕ Bool) tem 2 + 2 valores distintos, e (Bool × Bool) tem 2 × 2.
+
+
+PADRAO DO LEAN:
+
+- Product types
+Um construtor (`Ponto`) com multiplos campos.
+
+`structure` Ponto where
+  x : Float
+  y : Float
+
+
+- Sum types
+Varios construtores (opcoes), pode ser recursivo.
+
+`inductive` Bool where
+  | true : Bool
+  | false : Bool
+
+inductive Nat where
+  | zero : Nat
+  | succ (n : Nat) : Nat
+
+
+OUTROS TIPOS:
+
+- `Option` (igual a Maybe), representa ausencia ou presenca de valor
+
+inductive Option (α : Type) where
+  | none : Option α
+  | some (val : α) : Option α
+
+
+- `Prod` produto generico, o valor `(a, b)` tem o tipo `α × β`
+
+structure Prod (α : Type) (β : Type) where
+  fst : α
+  snd : β
+
+
+- `Sum` (igual a Either) soma generica, `α ⊕ β`
+
+inductive Sum (α : Type) (β : Type) where
+  | inl : α → Sum α β
+  | inr : β → Sum α β
+
+-/
+
+
 /- 1.6.4. Messages You May Meet -/
+/- mais explicacoes dps... -/
+
+-- Erros de universe level
+-- Quando um construtor aceita um Type como argumento do construtor.
+inductive MyType : Type where
+  | ctor : (α : Type) → α → MyType
+-- Recebe um Type e um valor desse Type
+
+inductive MyType (α : Type) : Type where
+  | ctor : α → MyType α
+
+-- Non-Positive Occurrence
+inductive MyType₁ : Type where
+  | ctor : (MyType₁ → Int) → MyType₁
+
+-- Termination Problems com Pattern Matching
+-- O Lean nao consegue ver que xs' e ys' sao "menores" quando faz match em tupla
+def sameLength (xs : List α) (ys : List β) : Bool :=
+  match (xs, ys) with
+  | ([], []) => true
+  | (x :: xs', y :: ys') => sameLength xs' ys'
+  | _ => false
+
+-- Falta o argumento de tipo
+inductive MyType₂ (α : Type) : Type where
+  | ctor : α → MyType₂
+-- MyType₂ aceita um argumento de tipo, que deveria ser dado:
+--| ctor : α → MyType₂ α
+
+
+-- 1.6.5. Exercises
+
+
+/-- Write a function to find the last entry in a list. It should return an Option. -/
+def List.last (xs : List α) : Option α :=
+  match xs with
+  | [x]      => some x
+  | _ :: xs' => last xs'
+  | _        => none
+
+#eval [6, 0, 11, 9].last
+#eval ([] : List Int).last
+
+/--
+Write a function that finds the first entry in a list that satisfies
+a given predicate. Start the definition with def List.findFirst?
+{α : Type} (xs : List α) (predicate : α → Bool) : Option α := ….
+-/
+
+-- Lembrar do `?` para quem retorna Option.
+def List.findFirst? {α : Type} (xs : List α) (predicate : α → Bool) : Option α :=
+  sorry
+
+/--
+Write a function Prod.switch that switches the two fields in a pair for each other.
+Start the definition with def Prod.switch {α β : Type} (pair : α × β) : β × α := ….
+-/
+
+def Prod.switch {α β : Type} (pair : α × β) : β × α :=
+  (pair.snd, pair.fst)
+
+#eval (2, true).switch
+
+/--
+Rewrite the PetName example to use a custom datatype and
+compare it to the version that uses Sum.
+  def PetName : Type := String ⊕ String
+-/
+
+inductive PetName₁ : Type where
+  | gato : String → PetName₁
+  | cachorro : String → PetName₁
+deriving Repr
+
+def animais : List PetName₁ :=
+  [PetName₁.cachorro "Rex",
+   PetName₁.gato "Nicolau"]
+
+/--
+Write a function zip that combines two lists into a list of pairs. The resulting
+list should be as long as the shortest input list. Start the definition with
+def zip {α β : Type} (xs : List α) (ys : List β) : List (α × β) := ….
+-/
+
+def zip {α β : Type} (xs : List α) (ys : List β) : List (α × β) :=
+  match xs, ys with
+  | x :: xs', y :: ys' => (x, y) :: zip xs' ys'
+  | _, _               => []
+
+#eval zip [1, 2, 3, 4] [true, false, true]
+
+
+/--
+Write a polymorphic function take that returns the first `n` entries in a list,
+where `n` is a Nat. If the list contains fewer than `n` entries, then the resulting
+list should be the entire input list. #eval take 3 ["bolete", "oyster"] should yield
+["bolete", "oyster"], and #eval take 1 ["bolete", "oyster"] should yield ["bolete"].
+-/
+
+def take {α : Type} (n : Nat) (xs : List α) : List α :=
+  match n, xs with
+  | 0, _                => []
+  | _, []               => []
+  | Nat.succ k, y :: ys => y :: take k ys
+
+#eval take 3 ["bolete", "oyster"]
+#eval take 1 ["bolete", "oyster"]
+
+/--
+Using the analogy between types and arithmetic, write a function that distributes
+products over sums. In other words, it should have type α × (β ⊕ γ) → (α × β) ⊕ (α × γ).
+-/
+
+def productsOverSums {α β γ : Type} (pair : α × (β ⊕ γ)) : (α × β) ⊕ (α × γ) :=
+  match pair.snd with
+  | Sum.inl b => Sum.inl (pair.fst, b)
+  | Sum.inr c => Sum.inr (pair.fst, c)
+
+
+/--
+Using the analogy between types and arithmetic, write a function that turns
+multiplication by two into a sum. In other words, it should have type Bool × α → α ⊕ α.
+-/
