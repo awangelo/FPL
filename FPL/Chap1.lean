@@ -509,7 +509,6 @@ inductive MyType₂ (α : Type) : Type where
 
 -- 1.6.5. Exercises
 
-
 /-- Write a function to find the last entry in a list. It should return an Option. -/
 def List.last (xs : List α) : Option α :=
   match xs with
@@ -568,7 +567,6 @@ def zip {α β : Type} (xs : List α) (ys : List β) : List (α × β) :=
 
 #eval zip [1, 2, 3, 4] [true, false, true]
 
-
 /--
 Write a polymorphic function take that returns the first `n` entries in a list,
 where `n` is a Nat. If the list contains fewer than `n` entries, then the resulting
@@ -595,8 +593,206 @@ def productsOverSums {α β γ : Type} (pair : α × (β ⊕ γ)) : (α × β) �
   | Sum.inl b => Sum.inl (pair.fst, b)
   | Sum.inr c => Sum.inr (pair.fst, c)
 
-
 /--
 Using the analogy between types and arithmetic, write a function that turns
 multiplication by two into a sum. In other words, it should have type Bool × α → α ⊕ α.
 -/
+
+def mulToSum (mul : Bool × α) : α ⊕ α :=
+  match mul with
+  | (true, v)  => Sum.inl v
+  | (false, v) => Sum.inr v
+
+
+-- 1.7. Additional Conveniences (algumas coisas repetidas)
+
+
+-- 1.7.1. Automatic Implicit Parameters
+
+-- Geralmente nao precisa citar os parametros implicitos em funcoes polimorficas.
+-- `{α : Type}` (ja nao estava usando muito)
+
+
+-- 1.7.2. Pattern-Matching Definitions
+
+-- Quando uma funcao usa pattern-matching direto, nao precisa dar nome aos argumentos
+
+def tamanho (xs : List α) : Nat :=
+  match xs with
+  | []      => 0
+  | _ :: ys => Nat.succ $ tamanho ys
+-- parece que `$` eh igual ao Haskell (ver o macro e `<|` depois)
+-- #check Nat.succ (t [1,2])
+-- #check Nat.succ $ t [1,2]
+-- #check Nat.succ <| t [1,2]
+
+-- Mesma coisa que:
+def t : List α → Nat
+  | []      => 0
+  | _ :: ys => Nat.succ $ tamanho ys
+
+#eval t [1,2,3]
+
+-- Tambem nao precisa nomear em casos com mais de 2 args, a virgula os separa em ordem:
+-- Lembrar de tirar o `:=`
+def getIvalue : Nat → List α → Option α
+  | _, []               => none
+  | Nat.zero, x :: _    => some x
+  | Nat.succ k, _ :: xs => getIvalue k xs
+
+#eval getIvalue 2 [7, 3, 1, 5]
+
+
+-- 1.7.3. Local Definitions
+
+-- Usar `let` para definicoes locais, caso essa definicao seja recursiva,
+-- `let rec` eh nescessario.
+
+def unzip₁ : List (α × β) → List α × List β
+  | [] => ([], [])
+  | (x, y) :: xys =>
+  (x :: (unzip₁ xys).fst, y :: (unzip₁ xys).snd)
+  -- (unzip₁ xys) eh chamado duas vezes, mesmo tendo o resultado igual
+
+def unzip₂ : List (α × β) → List α × List β
+  | [] => ([], [])
+  | (x, y) :: xys =>
+    let unzipped : List α × List β := unzip₂ xys
+    (x :: unzipped.fst, y :: unzipped.snd)
+
+-- `let` tambem aceita pattern matching (quando um pattern eh suficiente)
+def unzipPattern : List (α × β) → List α × List β
+  | [] => ([], [])
+  | (x, y) :: xys =>
+    -- descontroi o Prod
+    let (xs, ys) : List α × List β := unzipPattern xys
+    (x :: xs, y :: ys)
+
+
+-- 1.7.4. Type Inference
+
+-- Lean pode inferir tipos automaticamente em muitas situacoes
+-- Tipos explicitos podem ser omitidos tanto em `def` quanto em `let`
+def unzip : List (α × β) → List α × List β
+  | [] => ([], [])
+  | (x, y) :: xys =>
+    let unzipped := unzip xys  -- `unzipped` nao precisa de anotacao de tipo
+    (x :: unzipped.fst, y :: unzipped.snd)
+
+-- Quando omitir tipos (rule of thumb):
+-- ✓ Literais
+-- ✓ Aplicacao de funcoes (Lean ja sabe os args e retorno)
+-- ⨯ Parametros de funcoes
+-- ⨯ Definicoes sem contexto suficiente
+
+def id₁ (x : α) : α := x
+
+def id₂ (x : α) := x
+
+def id₃ x := x
+
+-- Erros com mensagens "failed to infer" ou "metavariables (?m.XYZ)"
+-- geralmente sao causados pelo Lean nao advinhar o tipo.
+
+
+-- 1.7.5. Simultaneous Matching
+
+-- Pattern matching pode inspecionar multiplos valores simultaneamente
+
+def drop (n : Nat) (xs : List α) : List α :=
+  match n, xs with
+  | Nat.zero, ys => ys
+  | _, [] => []
+  | Nat.succ n', _ :: ys => drop n' ys
+
+-- Lean nao consegue ver que xs' e ys' sao estruturalmente menores (ja vi isso).
+def sameLengthTupla (xs : List α) (ys : List β) : Bool :=
+  match (xs, ys) with
+  | ([], []) => true
+  | (x :: xs', y :: ys') => sameLengthTupla xs' ys'
+  | _ => false
+-- A tupla "esconde" a relacao entre xs e x :: xs'
+
+-- Matching simultaneo em listas eh aceito.
+def sameLengthOk (xs : List α) (ys : List β) : Bool :=
+  match xs, ys with
+  | [], []             => true
+  | _ :: xs', _ :: ys' => sameLength xs' ys'  -- Lean ve que xs' < xs
+  | _, _               => false
+
+
+-- 1.7.6. Natural Number Patterns
+
+-- Versao tradicional com construtores explicitos:
+def even₁(n : Nat) : Bool :=
+  match n with
+  | Nat.zero   => true
+  | Nat.succ k => not (even₁ k)
+-- ou
+def even₂ : Nat → Bool
+  | 0     => true
+  | n + 1 => not (even₂ n)  -- n + 1 = Nat.succ n
+
+-- Como funciona o pattern `n + k`:
+--   Argumento ESQUERDO (n): vira variavel para os Nat.succ restantes
+--   Argumento DIREITO (k): numero de Nat.succ que envolvem o "pattern" (n).
+
+-- Ex:
+def halveTradicional : Nat → Nat
+  | Nat.zero => 0
+  | Nat.succ Nat.zero => 0
+  | Nat.succ (Nat.succ n) => halveTradicional n + 1
+-- ou
+def halve : Nat → Nat
+  | 0     => 0
+  | 1     => 0
+  | n + 2 => halve n + 1
+
+-- halve n + 1 = (halve n) + 1, NAO halve (n + 1)
+
+-- O segundo argumento deve ser literal
+def halveErrado : Nat → Nat
+  | 0     => 0
+  | 1     => 0
+  | 2 + n => halve n + 1
+
+
+-- 1.7.7. Anonymous Functions
+
+-- Funcoes λ com `fun` (ou `λ`).
+
+#check fun (x : Int) => x + 1
+
+#check fun {α : Type} (x : α) => x
+#check fun x => x
+
+
+-- Tambem suportam pattern matching:
+#check fun
+  | 0     => none
+  | n + 1 => some n
+
+-- Funcoes com `def` podem ser reescritas como expressoes de funcao:
+def double : Nat → Nat := fun
+  | 0     => 0
+  | k + 1 => double k + 2
+
+-- `\.` para funcoes simples
+-- Em parenteses, o `·` representa um parametro
+
+
+#check (· + 1)      -- funcao que soma 1
+#eval (· + 5, 3) 2  -- funcao que retorna par (x + 5, 3)
+
+#check ((· + 5), 3)  -- duas funcoes anonimas (funcao, numero)
+#eval ((· + 5) 1, 3)
+
+-- Multiplos dots viram parametros da esquerda para direita:
+#eval (· , ·) 1 2
+#eval (· + ·) 1 2
+
+-- O `·` cria funcao nos parenteses MAIS PROXIMOS
+-- Util para usar em HOFs
+
+
+-- 1.7.8. Namespaces
