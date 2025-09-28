@@ -796,3 +796,169 @@ def double : Nat → Nat := fun
 
 
 -- 1.7.8. Namespaces
+
+-- Nomes podem ser definidos diratamente em um namespace:
+def Nat.double (x : Nat) : Nat := x + x
+#eval (4 : Nat).double
+
+-- Em uma secao de com o namespace
+namespace Op
+def triple (x : Nat) : Nat := 3 * x
+def quadruple (x : Nat) : Nat := 2 * x + 2 * x
+end Op
+
+#check Op.triple
+#check Op.quadruple
+
+-- Ou podem ser abertos com `open`.
+-- Em uma unica expressao:
+def timesTwelve (x : Nat) :=
+  open Op in
+  quadruple (triple x)
+
+-- Para o resto do arquivo
+-- `open Op`
+
+
+-- 1.7.9. if let
+
+-- Quando apenas UM construtor de um sum type eh interessante,
+-- `if let` pode ser mais simples que `match`.
+
+inductive Inline : Type where
+  | lineBreak
+  | string : String → Inline
+  | emph : Inline → Inline
+  | strong : Inline → Inline
+
+def Inline.string? (inline : Inline) : Option String :=
+  match inline with
+  | Inline.string s => some s
+  | _ => none
+
+-- Versao com `if let`:
+def Inline.stringIfLet? (inline : Inline) : Option String :=
+  if let Inline.string s := inline then
+    some s
+  else
+    none
+
+-- `_ => ...` vira o `else ...`
+
+
+-- 1.7.10. Positional Structure Arguments
+
+-- Em "1.4. Structures", sao apresentadas duas maneiraspara construir structures:
+--   Chamando o construtor: `Point.mk 1 2`.
+--   Usando braces: `{ x := 1, y := 2 }`.
+
+-- Mas structures tambem pode ser definidas usando `⟨ ⟩`.
+-- Lean precisa de contexto para conhecer o tipo da structure desejado:
+
+#eval ⟨1, 2⟩
+#eval (⟨1, 2⟩ : Ponto)
+
+
+-- 1.7.11. String Interpolation
+
+-- Prefixar uma string com `s!` ativa interpolacao, o que causa expressoes
+-- dentro de chaves (`{ e }`) serem substituidas pelos seus valores.
+
+#eval s!"three fives is {Op.triple 5}"
+
+-- Funciona apenas para expressoes que possuem `ToString`.
+#check s!"three fives is {Op.triple}"
+
+
+-- 1.8. Summary
+
+
+-- 1.8.1. Evaluating Expressions
+
+-- Em Lean, computacoes ocorrem apenas quando expressoes sao analisadas,
+-- quando variaveis recebem um nome, elas nunca mudam.
+
+
+-- 1.8.2. Functions
+
+-- Como uma linguagem funcional funcoes sao first-class citizens - podem
+-- ser passados como argumentos, variaveis e usadas como qualquer outro valor -
+-- Uma funcao que nao recebe argumentos usa o tipo `Unit`.
+
+-- Funcoes anonimas:
+#check fun (p : Ponto) => { x := p.y, y := p.x : Ponto }
+#check (· , false) 2
+
+-- Funcoes `def` ou `let` com uma lista de argumentos, ou
+-- usando a notacao de pattern-matching.
+
+-- Funcoes `def` ou `let` com uma lista de argumentos, ou
+-- usando a notacao de pattern-matching.
+
+def addThree (x y z : Nat) : Nat := x + y + z
+
+-- def isEven₁ (n : Nat) : Bool :=
+--   match n with
+--   | 0 => true
+--   | n + 1 => not (isEven₁ n)
+
+def isEven₂ : Nat → Bool
+  | 0 => true
+  | n + 1 => not (isEven₂ n)
+
+
+-- 1.8.3. Types
+
+-- Lean checa que toda expressao tem um Type, como:  Int, Ponto,
+-- {α : Type} → Nat → α → List α, Option (String ⊕ (Nat × String)).
+
+-- Algumas expressoes podem ter tipos diferentes, "3" pode ter tipo
+-- `Int` ou `Nat`, sendo duas coisas diferentes.
+
+-- Funcoes que recebem - de forma implicita ou explicita - Types sao
+-- chamadas polimorficas.
+
+
+-- 1.8.4. Structures and Inductive Types
+
+-- Novos tipos podem ser introduzidos usando `structure` ou `inductive`,
+-- sendo esses, nao equivalentes a nenhum outro tipo.
+
+-- Geralmente, `structure` eh usado para definir um "product type", que
+-- possuem um construtor (o propio nome) e varios argumentos.
+
+-- `inductive` eh usado para definir tipos "sum type", que possuem
+-- varios construtores diferentes.
+
+/-
+"Both structures and inductive datatypes may be consumed with pattern
+matching, which exposes the values stored inside of constructors using a
+subset of the syntax used to call said constructors. Pattern matching means
+that knowing how to create a value implies knowing how to consume it."
+-/
+
+
+-- 1.8.5. Recursion
+
+-- Para manter a integridade de sua estrutura logica, o Lean ser capaz de
+-- provar que todas as funcoes recursivas terminam. Tipos indutivos
+-- recursivos nao podem ter um construtor que recebe uma funcao do seu
+-- propio tipo como argumento, ja que isso tornaria possivel a existencia
+-- de funcoes que nao terminam.
+
+inductive TipoBixado : Type where
+  | mk : (TipoBixado → Int) → TipoBixado
+
+/-
+def funcaoBixada : TipoBixado :=
+  TipoBixado.mk (fun t =>
+    match t with
+    | TipoBixado.mk f => f t + 1)
+
+#eval funcaoBixada:
+= f funcaoBixada + 1
+= (f funcaoBixada) + 1
+= ((f funcaoBixada) + 1) + 1
+= (((f funcaoBixada) + 1) + 1) + 1
+= ((((f funcaoBixada) + 1) + 1) + 1) + 1
+-/
