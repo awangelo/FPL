@@ -194,12 +194,131 @@ def main₃ : IO Unit := do
 Define uma acao de IO que se chama `main₃` e nao retorna nada.
 Inicia um bloco de acoes ordenadas utilizado o `do`.
 
-Avalia imediatamente (lean NAO eh lazy) a expressao `IO.println "Hello!"`, gerando uma acao IO
-  que eh atribuida ao nome `englishGreeting`.
-Avalia a expressao `IO.println "Bonjour!"`,  gerando uma acao IO que tem seu
-  side effect executado imediatamente.
+Avalia imediatamente (lean NAO eh lazy) a expressao `IO.println "Hello!"`,
+  gerando uma acao IO que eh atribuida ao nome `englishGreeting`.
+Avalia a expressao `IO.println "Bonjour!"`,  gerando uma acao IO que tem
+  seu side effect executado imediatamente.
 Avalia a expressao `englishGreeting`, e executa seu side effect.
 -/
 
 
 -- 2.3. Starting a Project
+
+-- Lake eh configurado em um arquivo TOML que descreve as dependencias e
+-- o que sera buildado.
+
+
+-- 2.3.1. First steps
+
+-- `lake new <nome>` cria um diretorio com os seguintes conteudos:
+-- 1. `Main.lean` o arquivo que o compilador Lean vai olhar para
+--   a acao princial.
+-- 2. `<Nome>.lean` e `Nome/Basic.lean` sao a estrutura de uma
+--   biblioteca de apoio para o programa.
+-- 3. `lakefile.toml` contem a configuracao que o lake usa para buildar tudo.
+-- 4. `lean-toolchain` contem a versao do Lean que eh usada no projeto.
+
+-- `lake new` tambem cria um repo git, e um gitignore.
+
+-- Geralmente, a maioria da logica do programa vai estar em uma colecao de
+-- bibliotecas, enquanto o `Main.lean` vai ser um wrapper sobre elas,
+-- fazendo parsing de argumentos e executando a logica central.
+
+-- `lake init` cria um projeto em uma pasta que ja existe.
+
+
+-- 2.3.2. Lakefiles
+
+-- Cada `lakefile.toml` descreve um package, que pode conter varios
+-- executaveis.
+
+-- Um lakefile gerado contem:
+-- 1. Settings do package.
+-- 2. Declaracao de biblioteca.
+-- 3. Declaracao do executavel.
+
+/-
+name = "projetoExemplo"
+version = "0.1.0"
+defaultTargets = ["projetoExemplo"]
+
+[[lean_lib]]
+name = "ProjetoExemplo"
+
+[[lean_exe]]
+name = "projetoExemplo"
+root = "Main"
+-/
+
+-- Por convencao, o nome do pacote e executavel comeca com letra
+--   minuscula e de bibliotecas com maiuscula.
+-- Dependencies sao declaracoes de outros pacotes Lean (locais ou remotos)
+-- Os itens no arquivo de configuracao permitem configurar localizacao
+--   de arquivos fonte, hierarquias de modulos e flags do compilador.
+
+-- Lakefiles em formato Lean podem conter adicionalmente:
+--   External libraries: bibliotecas nao-Lean para link estatico
+--   Custom targets: alvos que nao se encaixam em biblioteca/executavel
+--   Scripts: acoes IO similares a main, mas com acesso aos metadados
+--   da configuracao do pacote
+
+
+-- 2.3.3. Libraries and Imports
+
+-- Uma biblioteca Lean consiste de uma colecao de source organizados
+-- hierarquicamente que podem ser importados, chamados modulos.
+
+-- Por padrao, uma biblioteca tem um arquivo raiz que corresponde ao seu nome.
+-- Modulos adicionais podem ser adicionados criando um diretorio com o nome
+-- da biblioteca e colocando arquivos dentro. Esses nomes podem ser importados
+-- substituindo o separador de diretorio por ponto:
+-- Arquivo Greeting/Smile.lean pode ser importado como `import Greeting.Smile`
+
+-- Hierarquia de modulos eh DESACOPLADA da hierarquia de namespaces
+-- - Modulos sao unidades de DISTRIBUICAO de codigo
+-- - Namespaces sao unidades de ORGANIZACAO de codigo
+-- Nomes definidos no modulo Greeting.Smile NAO ficam automaticamente
+-- no namespace Greeting.Smile - podem ficar em qualquer namespace
+
+-- `import` torna conteudo do arquivo disponivel
+-- `open` torna nomes de um namespace disponiveis sem prefixos
+
+-- `open Expression` torna Expression.happy acessivel como apenas `happy`
+-- Namespaces podem ser abertos seletivamente: `open Nat (toFloat)`
+-- torna apenas Nat.toFloat disponivel como `toFloat`
+
+-- Lib "Greeting"     (declarada no lakefile.toml)
+-- ── Greeting.lean      (modulo raiz da biblioteca)
+-- ── Greeting/          (pasta para organizar modulos)
+--    ├── Smile.lean     (modulo Greeting.Smile)
+--    └── Wave.lean      (modulo Greeting.Wave)
+
+
+-- 2.4. Worked Example: cat
+
+
+-- 2.4.1. Getting started
+
+-- Criar o package com `lake new feline` e remover a lib.
+--   ou usar `lake new feline exe`, que nao cria uma biblioteca.
+
+
+-- 2.4.2. Concatenating Streams
+
+
+/- 2.4.2.1. Streams -/
+
+-- 1. Define um buffer de 20kb
+-- 2. Cria uma funcao `dumb` que le um buffer por vez de um stream e o escreve
+--   no stdout, a funcao precisa ser marcada com `partial` porque o Lean nao
+--   percebe reducao na recursao. Quando marcada `partial`, Lean nao precisa de
+--   uma prova mostrando que ela termina. Isso deixa a possibilidade de recursao
+--   infinita (caso leia `/dev/random` por exemplo).
+
+-- O IO.FS.Stream, representa uma stream POSIX com suas operacoes, o campo `isTty`
+-- usa o tipo `BaseIO`, uma variacao do `IO` que nao pode devolver erros. Ele usa
+-- o mesmo EIO como base, mas ao contrario do `IO` (que passa um Erro como argumento)
+-- ele usa o `Empty`.
+#check BaseIO
+
+-- 3.
