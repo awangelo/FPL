@@ -311,14 +311,50 @@ root = "Main"
 -- 1. Define um buffer de 20kb
 -- 2. Cria uma funcao `dumb` que le um buffer por vez de um stream e o escreve
 --   no stdout, a funcao precisa ser marcada com `partial` porque o Lean nao
---   percebe reducao na recursao. Quando marcada `partial`, Lean nao precisa de
---   uma prova mostrando que ela termina. Isso deixa a possibilidade de recursao
---   infinita (caso leia `/dev/random` por exemplo).
+--   percebe reducao na recursao. Quando marcada `partial`, Lean nao precisa
+--   de uma prova mostrando que ela termina. Isso deixa a possibilidade de
+--   recursao infinita (caso leia `/dev/random` por exemplo).
 
--- O IO.FS.Stream, representa uma stream POSIX com suas operacoes, o campo `isTty`
--- usa o tipo `BaseIO`, uma variacao do `IO` que nao pode devolver erros. Ele usa
--- o mesmo EIO como base, mas ao contrario do `IO` (que passa um Erro como argumento)
--- ele usa o `Empty`.
+-- O IO.FS.Stream, representa uma stream POSIX com suas operacoes, o campo
+-- `isTty` usa o tipo `BaseIO`, uma variacao do `IO` que nao pode devolver erros.
+-- Ele usa o mesmo EIO como base, mas ao contrario do `IO` (que passa um Erro
+-- como argumento) ele usa o `Empty`.
 #check BaseIO
+-- Como a recursao eh a ultima expressao, ou seja, o codigo que "ja passou" e
+-- nao mantem nenhum estado, o compilador otimiza usando tail recursion,
+-- evitando a possibilidade de stack overflow.
 
--- 3.
+-- 3. Para permitir a leitura de arquivos a funcao fileStream recebe um path
+--   de um arquivo e retorna um IO (Option IO.FS.Stream), ou seja, o path pode
+--   conter um arquivo valido ou invalido. Caso nao seja valido, usa o `pure`
+--   para retornar Unit, se nao, cria um handler para o arquivo em read-mode e
+--   o converte, preenchendo uma structure Stream de acordo com o arquivo.
+
+-- `pure` faz "lift" do valor para o monad IO.
+
+
+/- 2.4.2.2. Handling Input -/
+
+-- O loop principal (`process`) eh outra funcao tail-recursive. Para poder
+-- retornar um exit code diferente se nenhum input for lido, ele recebe com
+-- argumento indicando o "status" do programa. Alem disso, recebe a lista de
+-- arquivos que devem ser processados.
+
+-- 1. Nao tem mais arquivos para ser processados, sai com exitCode normal.
+-- 2. O argumento eh "-", le o stdin e processa os proximos arquivos.
+-- 3. O argumento eh um arquivo, se nao pode ser lido eh pulado e o exitcode 1.
+
+-- `⟨fileName⟩` eh usado para construir o System.FilePath usando a string.
+
+
+/- 2.4.2.3. Main -/
+
+-- Em Lean existem tres tipos de main: `main : IO Unit` nao le args e sempre
+-- retorna 0, `main : IO UInt32` nao le args e retorna um exit code e
+-- `main : List String → IO UInt32` que le args e retorna exit code.
+
+
+-- 2.4.3. Meow!
+
+-- `lake build feline` e `echo "oi feline" | lake exe feline` para testar e
+-- `lake exe feline - Main.lean` para digitar e testar com arquivo.
