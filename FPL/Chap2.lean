@@ -364,3 +364,92 @@ root = "Main"
 
 -- Adcionada funcao `printHelp` que trata o argumento "--help" diretamente
 -- na main, printando as opcoes do programa.
+
+
+-- 2.5. Additional Conveniences
+
+
+-- 2.5.1. Nested Actions
+
+-- Varias funcoes do feline repetem a acao de nomear o resultado de uma acao
+-- IO (`let ... ← ...`) que eh usada apenas uma vez.
+
+/-
+partial def dump (stream : IO.FS.Stream) : IO Unit := do
+  let buf ← stream.read bufsize
+  if buf.isEmpty then
+    pure ()
+  else
+    let stdout ← IO.getStdout  -- NOMEIA
+    stdout.write buf           -- USA UMA VEZ
+    dump stream
+-/
+
+-- Quando o Lean compila um `do` block, expressoes com seta esquerda (←)
+-- imediatamente sob parenteses sao "elevadas" para o `do` mais proximo
+-- e seus resultados sao ligados a um nome unico. Esse nome unico substitui
+-- a expressao original.
+
+/-
+partial def dump (stream : IO.FS.Stream) : IO Unit := do
+  let buf ← stream.read bufSize
+  if buf.isEmpty then
+    pure ()
+  else
+    (← IO.getStdout).write buf  -- acao IO aninhada
+    dump stream
+-/
+
+-- fileStream tambem pode ser simplificado:
+def fileStream (filename : System.FilePath) : IO (Option IO.FS.Stream) := do
+  if not (← filename.pathExists) then          -- nested action
+    (← IO.getStderr).putStrLn s!"File not found: {filename}"  -- nested action
+    pure none
+  else
+    let handle ← IO.FS.Handle.mk filename IO.FS.Mode.read
+    pure (some (IO.FS.Stream.ofHandle handle))
+
+-- Acoes IO que o Lean eleva de contexto de expressoes aninhadas
+-- sao chamadas "nested actions". Evitam nomes usados apenas uma vez,
+-- simplificando o programa. Mas ainda pode ser util nomear resultados
+-- intermediarios em expressoes longas e complicadas.
+
+-- IMPORTANTE: Os efeitos colaterais ainda ocorrem na mesma ordem, e
+--   execucao de efeitos NAO eh intercalada com avaliacao de expressoes.
+-- Por isso, nested actions NAO podem ser elevadas dos ramos de um `if`.
+
+def getNumA : IO Nat := do
+  (← IO.getStdout).putStrLn "A"
+  pure 5
+
+def getNumB : IO Nat := do
+  (← IO.getStdout).putStrLn "B"
+  pure 7
+
+-- Nao compila:
+def test : IO Unit := do
+  let a : Nat := if (← getNumA) == 5 then 0 else (← getNumB)
+  (← IO.getStdout).putStrLn s!"The answer is {a}"
+
+-- Se fosse permitido, seria equivalente a:
+def testEquivalente : IO Unit := do
+  let x ← getNumA  -- SEMPRE executa
+  let y ← getNumB  -- SEMPRE executa (mesmo se x == 5)
+  let a : Nat := if x == 5 then 0 else y
+  (← IO.getStdout).putStrLn s!"The answer is {a}"
+
+-- Isso executaria getNumB mesmo quando getNumA == 5 (estragando o proposito do
+-- `if`), causando efeitos colaterais desnecessarios. Para prevenir isso, nested
+-- actions nao sao permitidas em `if` que nao seja uma linha do `do` block.
+
+def testCorreto : IO Unit := do
+  let x ← getNumA
+  let a ← if x == 5 then
+    pure 0
+  else do
+    let y ← getNumB
+    pure y
+  (← IO.getStdout).putStrLn s!"The answer is {a}"
+
+
+-- 2.5.2. Flexible Layouts for do
