@@ -358,3 +358,9 @@ root = "Main"
 
 -- `lake build feline` e `echo "oi feline" | lake exe feline` para testar e
 -- `lake exe feline - Main.lean` para digitar e testar com arquivo.
+
+
+-- 2.4.4. Exercise
+
+-- Adcionada funcao `printHelp` que trata o argumento "--help" diretamente
+-- na main, printando as opcoes do programa.

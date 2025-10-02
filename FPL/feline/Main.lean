@@ -1,5 +1,26 @@
 def bufSize : USize := 20 * 1024
 
+def helpMessage : String :=
+"feline - concatenate files and print on the standard output
+
+USAGE:
+    feline [FILE]...
+
+ARGUMENTS:
+    [FILE]...    Files to concatenate. Use '-' or no arguments to read from stdin.
+
+OPTIONS:
+    --help       Show this help message
+
+EXAMPLES:
+    feline file1.txt file2.txt    Concatenate and display file1.txt and file2.txt
+    feline -                      Read from standard input
+    feline                        Read from standard input (same as above)
+    cat file.txt | feline         Read from standard input via pipe
+
+If no files are specified, feline reads from standard input.
+If a file does not exist, an error message is printed to stderr and processing continues with remaining files."
+
 partial def dump (stream : IO.FS.Stream) : IO Unit := do
   let block ← stream.read bufSize
   if block.isEmpty then
@@ -35,6 +56,12 @@ def process (exitCode : UInt32) (args : List String) : IO UInt32 := do
       dump stream
       process exitCode args
 
+def printHelp : IO UInt32 := do
+  let stdout ← IO.getStdout
+  stdout.putStrLn helpMessage
+  pure 0
+
 def main : List String → IO UInt32
-  | []   => process 0 ["-"]
-  | args => process 0 args
+  | ["--help"]     => printHelp
+  | []             => process 0 ["-"]
+  | args           => process 0 args
