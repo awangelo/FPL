@@ -453,3 +453,170 @@ def testCorreto : IO Unit := do
 
 
 -- 2.5.2. Flexible Layouts for do
+
+-- Expressoes `do` no Lean sao sensiveis a whitespace. Cada acao IO ou
+-- binding local no `do` deve comecar em sua propria linha, e todos devem
+-- ter a mesma indentacao. Quase todos os usos de `do` devem ser escritos
+-- dessa forma.
+
+-- Em contextos raros, pode ser necessario controle manual sobre whitespace
+-- e indentacao, ou pode ser conveniente ter multiplas acoes pequenas em
+-- uma unica linha. Nesses casos:
+--   Newlines podem ser substituidas por ponto e virgula (;)
+--   Indentacao pode ser substituida por chaves {}
+
+-- Todas essas versoes sao equivalentes:
+
+-- Versao padrao (usando apenas layout sensivel a whitespace):
+def mainLayout : IO Unit := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  stdout.putStrLn "How would you like to be addressed?"
+  let name := (← stdin.getLine).trim
+  stdout.putStrLn s!"Hello, {name}!"
+
+-- Versao explicita com chaves e ponto e virgula:
+def mainExplicit : IO Unit := do {
+  let stdin ← IO.getStdin;
+  let stdout ← IO.getStdout;
+  stdout.putStrLn "How would you like to be addressed?";
+  let name := (← stdin.getLine).trim;
+  stdout.putStrLn s!"Hello, {name}!"
+}
+
+-- Versao hibrida (duas acoes na mesma linha):
+def mainHybrid : IO Unit := do
+  let stdin ← IO.getStdin; let stdout ← IO.getStdout
+  stdout.putStrLn "How would you like to be addressed?"
+  let name := (← stdin.getLine).trim
+  stdout.putStrLn s!"Hello, {name}!"
+
+-- Codigo Lean idiomatico usa chaves com `do` muito raramente.
+-- A versao com whitespace eh preferida.
+
+
+-- 2.5.3. Running IO Actions With #eval
+
+-- O comando `#eval` do Lean pode ser usado para executar acoes IO,
+-- nao apenas avalia-las. Normalmente, `#eval` avalia a expressao fornecida,
+-- converte o valor resultante para string e mostra como tooltip.
+
+-- Em vez de falhar porque acoes IO nao podem ser convertidas para strings,
+-- `#eval` as executa, realizando seus efeitos colaterais. Se o resultado
+-- da execucao eh Unit (), nenhuma string eh mostrada, mas se eh um tipo
+-- que pode ser convertido para string, o Lean exibe o valor resultante.
+
+#eval runActions (countdown 3)
+-- Saída:
+-- 3
+-- 2
+-- 1
+-- Blast off!
+
+-- Esta saida eh produzida pela execucao da acao IO, nao alguma representacao
+-- opaca da acao em si. `#eval` tanto avalia a expressao fornecida quanto
+-- executa o valor da acao resultante.
+
+-- Testar rapidamente acoes IO com `#eval` pode ser muito mais conveniente
+-- que compilar e executar programas inteiros. Porem, ha algumas limitacoes:
+
+-- 1. Ler do standard input simplesmente retorna input vazio.
+-- 2. A acao IO eh re-executada sempre que o Lean precisa atualizar
+--    informacoes de diagnostico, e isso pode acontecer em momentos
+--    imprevisiveis.
+-- 3. Uma acao que le e escreve arquivos pode fazer isso inesperadamente.
+
+
+-- 2.6. Summary
+
+
+-- 2.6.1. Evaluation vs Execution
+
+-- Side effects sao aspectos da execucao de programas que vao alem da
+-- avaliacao de expressoes matematicas. Enquanto a maioria das linguagens
+-- permite side effects durante a avaliacao, o Lean nao permite.
+
+-- Em vez disso, Lean tem um tipo chamado `IO` que representa DESCRICOES
+-- de programas que usam side effects. Essas descricoes sao entao executadas
+-- pelo sistema de runtime da linguagem, que invoca o avaliador de expressoes
+-- Lean para realizar computacoes especificas.
+
+-- Valores do tipo `IO α` sao chamados "IO actions". A mais simples eh `pure`,
+-- que retorna seu argumento e nao tem side effects reais.
+
+-- Uma acao IO `main` eh executada quando o programa inicia.
+-- `main` pode ter um de tres tipos:
+
+-- `main : IO Unit`: Sem argumentos e sem exit code.
+-- `main : IO UInt32`: Sem argumentos e com exit code.
+-- `main : List String → IO UInt32`: Com argumentos e com exit code.
+
+
+--  2.6.2. do Notation
+
+-- IO Actions basicas sao compostas usando do notation, uma expressao `do`
+-- contem uma sequencia de statements que podem ser:
+--   Expressoes que representam acoes IO.
+--   Definicoes com `let` e `:=` onde o nome se refere ao valor de uma
+--     expresao.
+--   Definicoes com `let` e `←` onde o nome se refere ao resultado de
+--     executar o valor da expressao fornecida.
+
+-- IO Actions escritas com `do` sao executadas um statement por vez.
+
+-- Expressoes `if` e `match` que ocorrem imediatamente sob um `do` sao
+-- implicitamente consideradas como tendo seu proprio `do` em cada ramo.
+-- Dentro de uma expressao `do`, nested actions sao expressoes com seta
+-- esquerda imediatamente sob parenteses. O compilador Lean implicitamente
+-- as eleva para o `do` mais proximo, que pode ser implicitamente parte de
+-- um ramo de uma expressao `match` ou `if`, e lhes da um nome unico.
+-- Esse nome unico entao substitui o local de origem da nested action.
+
+def exemploIf : IO Unit := do
+  if ← (← IO.getStdout).isTty then
+    IO.println "Running in terminal"
+  else
+    IO.println "Running in pipe/redirect"
+
+-- Equivale a:
+def exemploIfExplicito : IO Unit := do
+  let stdout ← IO.getStdout
+  let isTty ← stdout.isTty
+  if isTty then
+    IO.println "Running in terminal"
+  else
+    IO.println "Running in pipe/redirect"
+
+
+-- 2.6.3. Compiling and Running Programs
+
+-- Um programa que consiste em um unico arquivo com uma definicao "main" pode
+--   ser rodado com `lake --run FILE`.
+-- Projetos Lean sao organizados em packages, que sao colecoes de bibliotecas
+--   (libraries) e executaveis juntos com informacoes sobre dependencias e
+--   configuracao de build.
+-- Packages sao descritos usando a build tool lake, use `lake new <nome> <template>`
+--   para criar um package em um novo diretorio ou `lake init` para criar um
+--   no diretorio atual e `lake build` para buildar um projeto.
+
+
+-- 2.6.4. Partiality
+
+-- No modelo matematico, toda expressao deve ter um valor. Isso exclui
+-- pattern matches incompletos e programas que podem entrar em loop infinito.
+-- O Lean garante que todos os `match` cubram todos os casos e que todas
+-- as funcoes recursivas sejam estruturalmente recursivas ou tenham prova
+-- explicita de terminacao.
+
+-- Porem, alguns programas reais precisam da possibilidade de loop infinito
+-- para lidar com dados potencialmente infinitos (ex: streams POSIX).
+-- O Lean fornece uma "saida" para isso: funcoes marcadas com `partial`
+-- nao precisam seguir estes principios.
+
+-- Isso tem um custo:
+-- 1. Funcoes parciais nao sao avaliadas durante type checking (para evitar
+--    loop infinito no type checker)
+-- 2. Provas matematicas nao podem inspecionar definicoes de funcoes parciais,
+--    tornando programas que as usam muito menos amenos a prova formal
+
+-- Usar `partial` apenas quando necessario para lidar com dados infinitos.
