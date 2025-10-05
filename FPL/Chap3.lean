@@ -87,11 +87,12 @@ def fourteen₂ : Pos := plus seven seven
 -- Como nao ha instance de Plus Float, tentar somar floats usando plus falha:
 #eval plus 5.2 917.25861
 
--- 1. Type class: descreve um conjunto de operacoes para os tipos que a instanciam.
---      nome + parametros (geralmente um tipo) + metodos (a operacao).
--- 2. Instance: a implementacao dos metodos para um tipo especifico.
--- 3. "failed to synthesize" = instance nao encontrada
-
+/-
+  * Type class: descreve um conjunto de operacoes para os tipos que a instanciam
+      nome + parametros (geralmente um tipo) + metodos (a operacao).
+  * Instance: a implementacao dos metodos para um tipo especifico.
+  * "failed to synthesize" = instance nao encontrada
+-/
 -- Algumas type classes definem "propiedades" ao inves de operacoes:
 
 #check Inhabited
@@ -123,10 +124,11 @@ instance : Add Pos where
 
 def fourteen₃ : Pos := seven + seven
 
--- 1. HAdd: adicao heterogenea (tipos diferentes) - mais geral
--- 2. Add: adicao homogenea (mesmo tipo) - mais simples
--- 3. x + y eh syntactic sugar para HAdd.hAdd x y
-
+/-
+  * HAdd: adicao heterogenea (tipos diferentes) - mais geral.
+  * Add: adicao homogenea (mesmo tipo) - mais simples.
+  * x + y eh syntactic sugar para HAdd.hAdd x y.
+-/
 
 -- 3.1.3. Conversion to Strings
 
@@ -169,3 +171,130 @@ instance : ToString Pos where
 
 
 -- 3.1.4. Overloaded Multiplication
+
+-- Assim como na adicao, para multiplicacao existe o `HMul` (HMul.hMul x y) e
+-- `Mul`. Com uma instancia de `Mul` para os Positvos, a multiplicacao funciona
+-- como esperado.
+def Pos.mul : Pos → Pos → Pos
+  | Pos.one, k => k
+  | Pos.succ n, k => n.mul k + k
+
+instance : Mul Pos where
+  mul := Pos.mul
+
+#eval [seven * Pos.one, seven * seven, Pos.succ Pos.one * seven]
+
+
+-- 3.1.5. Literal Numbers
+
+-- Eh muito inconveniente escrever uma sequencia de construtores para numeros
+-- positivos. Uma solucao seria fornecer uma funcao para converter Nat em Pos.
+-- Porem, essa abordagem tem desvantagens:
+-- 1. Como Pos nao pode representar 0, a funcao resultaria em um numero maior
+--    ou retornaria Option Pos.
+-- 2. A necessidade de chamar a funcao explicitamente tornaria programas que
+--    usam numeros positivos muito menos convenientes que programas que usam Nat.
+-- Ter um trade-off entre tipos precisos e APIs convenientes faz com que os
+-- tipos precisos se tornem menos uteis.
+
+-- Ha tres type classes usadas para fazer overload de literais numericos:
+-- Zero, One e OfNat.
+
+-- 1. ZERO: Muitos tipos tem valores naturalmente escritos como `0`.
+#check Zero
+-- Como 0 nao eh um numero positivo, nao deve haver instance de `Zero Pos`.
+
+-- 2. ONE: Muitos tipos tem valores naturalmente escritos como `1`
+#check One
+-- Uma instance de One Pos faz sentido:
+instance : One Pos where
+  one := Pos.one
+
+#eval (1 : Pos)
+
+-- 3. OFNAT: Literais de numeros naturais sao interpretados usando OfNat
+#check OfNat
+
+-- Esta type class recebe dois argumentos:
+-- - `α`: o tipo para o qual um numero natural eh overloaded
+-- - `_`: Nat: o literal numerico real encontrado no programa
+-- O metodo ofNat eh usado como valor do literal numerico.
+
+-- Como a classe contem o argumento Nat, torna-se possivel definir apenas
+-- instances para valores onde o numero faz sentido.
+
+-- OfNat demonstra que argumentos para type classes NAO precisam ser tipos.
+-- Essa flexibilidade permite que operacoes overloaded sejam fornecidas para
+-- valores particulares alem de tipos particulares, assim, podendo criar uma
+-- typeclass menos flexivel.
+
+-- A biblioteca padrao do Lean organiza para que haja uma instance `Zero α`
+-- sempre que houver uma instance `OfNat α 0`, e vice-versa. Similarmente, uma
+-- instance de `One α` implica uma instance de `OfNat α 1`, assim como uma
+-- instance de `OfNat α 1` implica uma instance de `One α`.
+
+/-
+  * Zero/One/OfNat: type classes para literais numericos.
+  * OfNat permite overload para numeros especificos.
+  * Type classes podem ter argumentos nao-tipo (menos flexiveis).
+-/
+
+-- Um Sum Type que pode representar numeros naturais menos que 4:
+inductive LT4 where
+  | zero
+  | one
+  | two
+  | three
+deriving Repr
+
+-- Embora nao faca sentido permitir qualquer literal numerico para este tipo,
+-- numeros menores que quatro claramente fazem sentido:
+
+instance : OfNat LT4 0 where
+  ofNat := LT4.zero
+
+instance : OfNat LT4 1 where
+  ofNat := LT4.one
+
+instance : OfNat LT4 2 where
+  ofNat := LT4.two
+
+instance : OfNat LT4 3 where
+  ofNat := LT4.three
+
+#eval (3 : LT4)
+#eval (0 : LT4)
+
+-- Literais fora dos limites ainda nao sao permitidos:
+#eval (4 : LT4)
+
+-- Para Pos, a instance OfNat deve funcionar para qualquer Nat exceto Nat.zero.
+-- Outra maneira de expressar isso eh dizer que para todos os numeros naturais n,
+-- a instance deve funcionar para n + 1. Assim como nomes como `α` automaticamente
+-- se tornam argumentos implicitos para funcoes que o Lean preenche sozinho,
+-- instances podem receber argumentos implicitos automaticos.
+
+-- Nesta instance, o argumento n representa qualquer Nat, e a instance eh
+-- definida para um Nat que eh um maior:
+
+instance : OfNat Pos (n + 1) where
+  ofNat :=
+    let rec natPlusOne : Nat → Pos
+      | 0 => Pos.one
+      | k + 1 => Pos.succ (natPlusOne k)
+    natPlusOne n
+
+-- Como `n` representa um Nat a menos do que o usuario escreveu, a funcao
+-- helper natPlusOne retorna um Pos que eh um maior que seu argumento. Isso
+-- torna possivel usar literais de numeros naturais para numeros positivos,
+-- mas nao para zero:
+
+def eight : Pos := 8
+def zero : Pos := 0
+
+/-
+  * OfNat permite instances para valores especificos (OfNat LT4 3).
+  * OfNat pode usar padroes (OfNat Pos (n + 1)) para intervalos.
+  * Argumentos implicitos em instances funcionam como em funcoes.
+  * Isso permite literais numericos apenas onde fazem sentido logicamente.
+-/
