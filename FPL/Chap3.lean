@@ -298,3 +298,177 @@ def zero : Pos := 0
   * Argumentos implicitos em instances funcionam como em funcoes.
   * Isso permite literais numericos apenas onde fazem sentido logicamente.
 -/
+
+
+-- 3.1.6. Exercises
+
+
+/- 3.1.6.1. Another Representation -/
+
+-- An alternative way to represent a positive number is as the successor of some
+-- Nat. Replace the definition of Pos with a structure whose constructor is named
+-- succ that contains a Nat:
+
+-- Define instances of Add, Mul, ToString, and OfNat that allow this version of
+-- Pos to be used conveniently.
+
+-- Representacao muito ruim (LEMBRAR SEMPRE QUE FALTA ADCIONAR O CASO BASE)
+structure Posi where
+  succ ::
+  pred : Nat
+
+def Posi.add : Posi → Posi → Posi
+  | Posi.succ k, Posi.succ j => Posi.succ (k + j + 1)
+
+def Posi.mul : Posi → Posi → Posi
+  | Posi.succ k, Posi.succ j => Posi.succ (k * j + k + j)
+
+def Posi.toNat : Posi → Nat
+  | Posi.succ n => n + 1
+
+instance : Mul Posi where
+  mul := Posi.mul
+
+instance : Add Posi where
+  add := Posi.add
+
+instance : ToString Posi where
+  toString x := toString x.toNat
+
+instance : OfNat Posi (n + 1) where
+  ofNat := Posi.succ n
+
+#eval Posi.mul (Posi.succ 2) (Posi.succ 3)
+#eval Posi.add (Posi.succ 2) (Posi.succ 3)
+#eval Posi.succ 2
+#eval (2 : Posi)
+
+
+/- 3.1.6.2. Even Numbers -/
+
+-- Define a datatype that represents only even numbers. Define instances of
+-- Add, Mul, and ToString that allow it to be used conveniently. OfNat requires
+-- a feature that is introduced in the next section.
+
+inductive Even : Type where
+  | zero : Even
+  | succ : Even → Even
+
+-- Parece que o Lean nao consegue otimizar para usar a melhor ordem, mesmo se
+-- as em operacoes forem comutativas.
+-- (deve ter alguma anotacao ou macro pra isso)
+def Even.add : Even → Even → Even
+  | Even.zero, k   => k
+  | k, Even.zero   => k
+  | Even.succ j, k => Even.succ (Even.succ (Even.add j k))
+
+def Even.mul : Even → Even → Even
+  | Even.zero, _   => Even.zero
+  | _, Even.zero   => Even.zero
+  | Even.succ j, k => Even.add k (Even.add k (Even.mul j k))
+--  (j+2) * k = k + k + (j * k) = 2k + jk
+--  6 * 2 = 2 + 2 + 4 * 2 = 2*4 + 2*4
+
+def Even.toNat : Even → Nat
+  | Even.zero => 0
+  | Even.succ n => 2 + n.toNat
+
+instance : Add Even where
+  add := Even.add
+
+instance : Mul Even where
+  mul := Even.mul
+
+instance : ToString Even where
+  toString x := toString (x.toNat)
+
+#eval Even.add Even.zero Even.zero
+#eval Even.add Even.zero (Even.succ Even.zero)
+#eval Even.add (Even.succ Even.zero) (Even.succ Even.zero)
+#eval toString (Even.add (Even.succ Even.zero) (Even.succ Even.zero))
+
+
+/- 3.1.6.3. HTTP Requests -/
+
+-- An HTTP request begins with an identification of a HTTP method, such as GET
+-- or POST, along with a URI and an HTTP version. Define an inductive type that
+-- represents an interesting subset of the HTTP methods, and a structure that
+-- represents HTTP responses. Responses should have a ToString instance that
+-- makes it possible to debug them. Use a type class to associate different IO
+-- actions with each HTTP method, and write a test harness as an IO action that
+-- calls each method and prints the result.
+
+namespace Http
+
+inductive Method where
+  | GET
+  | POST
+  | PUT
+  | DELETE
+  deriving Repr
+
+structure Response where
+  statusCode : Nat
+  statusText : String
+
+namespace Response
+
+def toString (r : Response) : String :=
+  s!"Status Code: {r.statusCode}, Status Text: {r.statusText}"
+
+def ok : Response :=
+  { statusCode := 200, statusText := "OK"}
+
+def badRequest : Response :=
+  { statusCode := 400, statusText := "Bad Request"}
+
+def unauthorized : Response :=
+  { statusCode := 401, statusText := "Unauthorized"}
+
+def forbidden : Response :=
+  { statusCode := 403, statusText := "Forbidden"}
+
+def notFound : Response :=
+  { statusCode := 404, statusText := "Not Found"}
+
+def internalServerError : Response :=
+  { statusCode := 500, statusText := "Internal Server Error"}
+
+instance : ToString Response where
+  toString := toString
+
+end Response
+
+class HttpMethod (m : Method) where
+  execute : IO Response
+
+instance : HttpMethod Method.GET where
+  execute := pure Response.badRequest
+
+instance : HttpMethod Method.POST where
+  execute := pure Response.forbidden
+
+instance : HttpMethod Method.PUT where
+  execute := pure Response.ok
+
+instance : HttpMethod Method.DELETE where
+  execute := pure Response.notFound
+
+def testHarness : IO Unit := do
+  IO.println "Testing HTTP Methods:"
+  let getResp ← HttpMethod.execute (m := Method.GET)
+  IO.println s!"GET: {getResp}"
+  let postResp ← HttpMethod.execute (m := Method.POST)
+  IO.println s!"POST: {postResp}"
+  let putResp ← HttpMethod.execute (m := Method.PUT)
+  IO.println s!"PUT: {putResp}"
+  let deleteResp ← HttpMethod.execute (m := Method.DELETE)
+  IO.println s!"DELETE: {deleteResp}"
+
+end Http
+
+#eval Http.Response.ok
+#eval Http.Response.badRequest
+#eval Http.Response.notFound
+
+#eval Http.testHarness
