@@ -317,31 +317,21 @@ structure Posi where
   succ ::
   pred : Nat
 
-def Posi.add : Posi → Posi → Posi
-  | Posi.succ k, Posi.succ j => Posi.succ (k + j + 1)
-
-def Posi.mul : Posi → Posi → Posi
-  | Posi.succ k, Posi.succ j => Posi.succ (k * j + k + j)
-
-def Posi.toNat : Posi → Nat
-  | Posi.succ n => n + 1
-
 instance : Mul Posi where
-  mul := Posi.mul
+  mul a b := Posi.succ (a.pred * b.pred + a.pred + b.pred)
 
 instance : Add Posi where
-  add := Posi.add
+  add a b := Posi.succ (a.pred + b.pred + 1)
 
 instance : ToString Posi where
-  toString x := toString x.toNat
+  toString a := toString (a.pred + 1)
 
 instance : OfNat Posi (n + 1) where
   ofNat := Posi.succ n
 
-#eval Posi.mul (Posi.succ 2) (Posi.succ 3)
-#eval Posi.add (Posi.succ 2) (Posi.succ 3)
-#eval Posi.succ 2
-#eval (2 : Posi)
+#eval (Posi.succ 2) + (Posi.succ 3)
+#eval (Posi.succ 2) * (Posi.succ 3)
+#eval s!"{(2 : Posi)}"
 
 
 /- 3.1.6.2. Even Numbers -/
@@ -472,3 +462,133 @@ end Http
 #eval Http.Response.notFound
 
 #eval Http.testHarness
+
+
+-- 3.2. Type Classes and Polymorphism
+
+-- Colchetes em assinaturas de tipo indicam constraints de type class.
+-- `IO.println : {α : Type} → [ToString α] → α → IO Unit`
+-- funciona para qualquer tipo α que tenha instance ToString
+
+
+-- 3.2.1. Checking Polymorphic Functions' Types
+
+-- Verificar o tipo de uma funcao que recebe argumentos implicitos ou usa type
+-- classes requer sintaxe adicional.
+
+-- Simplesmente escrever:
+#check (IO.println)
+-- retorna um tipo com metavariables.
+
+-- Isso acontece porque o Lean faz o melhor para descobrir argumentos implicitos,
+-- e a presenca de metavariables indica que ainda nao descobriu informacao de
+-- tipo suficiente para fazer isso.
+
+-- Para entender a assinatura de uma funcao, esse comportamento pode ser
+-- suprimido com um arroba (@) antes do nome da funcao:
+#check @IO.println
+
+
+-- 3.2.2. Defining Polymorphic Functions with Instance Implicits
+
+-- Uma funcao que soma todo o conteudo de uma lista precisa de duas contraints
+-- `Add` para poder soma-las `OfNat` para representar o caso base.
+
+def List.sumAllContents [Add α] [OfNat α 0] : List α → α
+  | []      => 0
+  | x :: xs => x + xs.sumAllContents
+
+-- Tambem pode ser definida com `Zero α`, que traz o mesmo efeito.
+#check Zero
+
+#eval [1, 2, 6].sumAllContents
+
+def fourPos : List Pos := [1, 2, 3, 4]
+#eval fourPos.sumAllContents
+
+
+-- Instance implicits (colchetes []) fazem o Lean buscar valores em uma tabela
+-- de instances, diferente de argumentos implicitos normais que usam unificacao.
+
+-- Type classes sao estruturas nos bastidores - instances sao valores dessa
+-- estrutura com implementacoes dos metodos.
+
+-- Para adcionar dois `PPoint` eh nescessario que `α` tambem seja instancia de
+-- `Add`.
+structure PPoint (α : Type) where
+  x : α
+  y : α
+deriving Repr
+
+-- Instances podem receber outros instance implicits como argumentos.
+-- Ex: Add (PPoint α) requer Add α
+instance [Add α] : Add (PPoint α) where
+  add p1 p2 := { x := p1.x + p2.x, y := p1.y + p2.y }
+
+-- Isso cria busca recursiva: Lean encontra instance Add (PPoint Nat),
+-- que referencia instance Add Nat encontrada automaticamente.
+
+-- Type classes oferecem mais poder que simples overloading:
+--   Biblioteca de instances polimorficas = blocos de codigo.
+--   Compilador monta automaticamente dado apenas o tipo desejado.
+--   Clientes da API nao precisam conectar partes manualmente.
+
+
+-- 3.2.3. Methods and Implicit Arguments
+
+#check @OfNat.ofNat
+-- mas na declaração do metodo, ofNat tem apenas tipo α.
+
+-- Declarar uma type class cria:
+-- 1. Estrutura contendo implementacoes das operacoes.
+-- 2. Namespace com mesmo nome da classe.
+-- 3. Funcao para cada metodo que busca implementacao na instance.
+
+-- Similar a structures que criam accessors, mas metodos de type class
+-- recebem instance como argumento implicito (encontrado automaticamente).
+
+-- Para Lean encontrar instance, parametros devem estar disponveis:
+-- cada parametro da type class deve aparecer no metodo antes da instance.
+
+#check Add.add
+-- α pode ser implicito pois argumentos fornecem informacao do tipo
+
+-- OfNat.ofNat: literal Nat nao aparece em outros parametros
+-- Lean nao teria info para descobrir n implicito → API inconveniente
+-- Portanto usa parametro explicito nesses casos
+
+
+-- 3.2.4. Exercises
+
+
+/- 3.2.4.1. Even Number Literals -/
+
+-- Write an instance of OfNat for the even number datatype from the previous
+-- section's exercises that uses recursive instance search.
+
+/-
+  inductive Even : Type where
+    | zero : Even
+    | succ : Even → Even
+-/
+
+instance : OfNat Even 0 where
+  ofNat := Even.zero
+
+instance [OfNat Even n] : OfNat Even (n + 2) where
+  ofNat := Even.succ (OfNat.ofNat n)
+
+#eval (0 : Even)
+#eval (2 : Even)
+#eval (4 : Even)
+
+
+/- 3.2.4.2. Recursive Instance Search Depth -/
+
+-- There is a limit to how many times the Lean compiler will attempt a recursive
+-- instance search. This places a limit on the size of even number literals
+-- defined in the previous exercise. Experimentally determine what the limit is.
+
+#eval (2222 : Even)
+#eval (22222 : Even)
+#eval (256 : Even) -- limite
