@@ -592,3 +592,76 @@ instance [OfNat Even n] : OfNat Even (n + 2) where
 #eval (2222 : Even)
 #eval (22222 : Even)
 #eval (256 : Even) -- limite
+
+
+-- 3.3. Controlling Instance Search
+
+-- Add eh suficiente para definir adicao entre numeros de apenas um tipo.
+-- Em varios casos pode ser util definir overloading de operadores heterogenos.
+
+def addNatPos : Nat → Pos → Pos
+  | 0, p => p
+  | n + 1, p => Pos.succ (addNatPos n p)
+
+def addPosNat : Pos → Nat → Pos
+  | p, 0 => p
+  | p, n + 1 => Pos.succ (addPosNat p n)
+
+-- Funcoes como essas nao podem ser usadas na instancia `Add`, ja que `add` eh
+-- do tipo `α → α → α`.
+
+
+-- 3.3.1. Heterogeneous Overloadings
+
+#check HAdd
+
+instance : HAdd Nat Pos Pos where
+  hAdd := addNatPos
+
+instance : HAdd Pos Nat Pos where
+  hAdd := addPosNat
+
+#eval (3 : Pos) + (5 : Nat)
+#eval (3 : Nat) + (5 : Pos)
+
+-- A type class `HAdd` eh parecida com a seguinte:
+class HPlus₀ (α : Type) (β : Type) (γ : Type) where
+  hPlus₀ : α → β → γ
+
+instance : HPlus₀ Nat Pos Pos where
+  hPlus₀ := addNatPos
+
+instance : HPlus₀ Pos Nat Pos where
+  hPlus₀ := addPosNat
+
+#eval toString (HPlus₀.hPlus₀ (3 : Pos) (5 : Nat))
+#eval (HPlus₀.hPlus₀ (3 : Pos) (5 : Nat))
+-- O erro ocorre porque o Lean nao conhece o tipo de `γ`, que deve ser o
+-- tipo resultante da adicao, funciona apenas se o tipo for especificado.
+
+#eval (HPlus₀.hPlus₀ (3 : Pos) (5 : Nat) : Pos)
+
+
+-- 3.3.2. Output Parameters
+
+-- Esse problema, pode ser resolvido declarando o `γ` como parametro de saida,
+-- a maioria dos parametros para uma type class sao inputs para o algoritmo
+-- de busca.
+
+-- Em casos como esse eh util iniciar o processo de busca mesmo quando alguns
+-- parametros de tipo ainda sao desconhecidos, isso pode ser feito utilizando
+-- o modificador `outParam`:
+
+class HPlus (α : Type) (β : Type) (γ : outParam Type) where
+  hPlus : α → β → γ
+
+instance : HPlus Nat Pos Pos where
+  hPlus := addNatPos
+
+instance : HPlus Pos Nat Pos where
+  hPlus := addPosNat
+
+#eval HPlus.hPlus (3 : Pos) (5 : Nat)
+
+
+-- 3.3.3. Default Instances
