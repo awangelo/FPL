@@ -665,3 +665,297 @@ instance : HPlus Pos Nat Pos where
 
 
 -- 3.3.3. Default Instances
+
+-- Decidir se um parametro eh input ou output controla as circunstancias que
+-- o Lean inicia a type class search, a pesquisa nao ocorre ate que todos os
+-- parametros de input sejam conhecidos. Em alguns casos parametros de output
+-- nao sao suficientes, e a instance search tambem deveria ocorrer quando
+-- alguns inputs sao desconhecidos. (Eh parecido com valores default para
+-- parametros opcionais em python, mas nesse caso sao tipos).
+
+-- "Default instances" sao instancias que estao disponiveis para a busca
+-- _ate quando nao todos os inputs sao conhecidos_. Quando uma dessas
+-- instancias pode ser usada, ela sera. Isso permite que programas passem no
+-- type checker ao inves de falhar com erros sobre tipos desconhecidos e
+-- metavariables.
+
+-- Exemplo de uma default instance: HPlus pode ser derivado de uma instancia
+-- `Add`. Adicao normal eh um caso especial da adicao heterogenea onde todos
+-- os tres tipos sao iguais:
+instance [Add α] : HPlus α α α where
+  hPlus := Add.add
+
+#eval HPlus.hPlus (3 : Nat) (5 : Nat)
+#check HPlus.hPlus (3 : Nat) (5 : Nat)
+
+-- hPlus funciona quando os dois tipos sao conhecidos, mas com apenas um
+-- argumento, gera metavariables:
+#check HPlus.hPlus (3 : Nat)
+
+-- Na maioria dos casos, quando alguem fornece um argumento para adicao,
+-- o outro argumento tera o mesmo tipo. Para tornar esta instance em uma
+-- default instance, aplica-se o atributo `default_instance`:
+@[default_instance]
+instance [Add α] : HPlus α α α where
+  hPlus := Add.add
+
+#check HPlus.hPlus (3 : Nat)
+
+-- Cada operador que existe em versoes heterogeneas e homogeneas segue esse
+-- padrao: o operador infix eh substituido por uma chamada da versao heterogenea,
+-- e a instance homogenea default eh selecionada quando possivel.
+
+-- Similarmente, escrever `5` da um Nat ao inves de uma metavariable esperando
+-- mais informacao para selecionar uma instance OfNat, porque a instance
+-- OfNat para Nat eh uma default instance.
+
+-- Default instances tambem podem receber prioridades que afetam qual sera
+-- escolhida em situacoes onde mais de uma pode se aplicar.
+
+#check OfNat
+
+
+-- 3.3.4. Exercises
+
+/-
+  Define an instance of `HMul (PPoint α) α (PPoint α)` that multiplies both
+  projections by the scalar. It should work for any type α for which there
+  is a Mul α instance. For example,
+
+  `#eval {x := 2.5, y := 3.7 : PPoint Float} * 2.0`
+
+  should yield
+
+  `{ x := 5.000000, y := 7.400000 }`
+-/
+
+#check PPoint
+#check HMul
+#check Mul
+
+instance [Mul α] : HMul (PPoint α) α (PPoint α) where
+  hMul p scalar := ⟨p.x * scalar, p.y * scalar⟩
+
+#eval {x := 2.5, y := 3.7 : PPoint Float} * 2.0
+
+
+-- 3.4. Arrays and Indexing
+
+-- O interlude mostra como usar indexing para pegar entradas de uma lista
+-- pela posicao, essa sintaxe tambem eh governada por uma type class.
+
+
+-- 3.4.1. Arrays
+
+-- Em Lean, `Array α` eh um array dinamicamente redimensionavel contendo
+-- valores do tipo α, diferente de `List` onde cada cons tem um pointer.
+
+#check List   -- Linked List
+#check Array  -- Slice
+#check Vector -- Array com tamanho n
+
+-- Em linguagens funcionais puras como Lean, nao eh possivel mutar uma posicao
+-- em uma estrutura de dados. Ao inves disso, uma copia eh feita com as
+-- modificacoes desejadas. Porem, copiar nem sempre eh necessario: o compilador
+-- e runtime do Lean contem uma otimizacao que permite modificacoes serem
+-- implementadas como mutacoes nos bastidores quando ha apenas uma unica
+-- referencia ao array.
+
+-- Arrays sao parecidos com listas, mas com um # na frente:
+def northernTrees : Array String :=
+  #["sloe", "birch", "elm", "oak"]
+
+#eval northernTrees.size
+
+#eval northernTrees[2]
+#eval northernTrees[8]
+
+
+-- 3.4.2. Non-Empty Lists
+
+-- Um datatype que representa listas nao-vazias pode ser definido como uma
+-- estrutura com um campo para a cabeca da lista e um campo para a cauda,
+-- que eh uma lista comum potencialmente vazia:
+
+structure NonEmptyList (α : Type) : Type where
+  head : α
+  tail : List α
+
+def idahoSpiders : NonEmptyList String := {
+  head := "Banded Garden Spider",
+  tail := [
+    "Long-legged Sac Spider",
+    "Wolf Spider",
+    "Hobo Spider",
+    "Cat-faced Spider"
+  ]
+}
+
+-- Lookup por indice em uma lista nao-vazia considera tres possibilidades:
+-- 1. Indice 0: retorna head
+-- 2. Indice n+1, tail vazia: indice fora dos limites
+-- 3. Indice n+1, tail nao-vazia → chamada recursiva em tail e n
+
+def NonEmptyList.get? : NonEmptyList α → Nat → Option α
+  | xs, 0 => some xs.head
+  | {head := _, tail := []}, _ + 1 => none
+  | {head := _, tail := h :: t}, n + 1 => get? {head := h, tail := t} n
+
+-- Versao simples:
+def NonEmptyList.get?₁ : NonEmptyList α → Nat → Option α
+  | xs, 0              => some xs.head
+  | ⟨_, []⟩, _ + 1     => none
+  | ⟨_, h :: t⟩, n + 1 => get? ⟨h, t⟩ n
+
+-- Versao alternativa usando lookup de lista `xs.tail[n]?`:
+def NonEmptyList.get?' : NonEmptyList α → Nat → Option α
+  | xs, 0 => some xs.head
+  | xs, n + 1 => xs.tail[n]?
+
+-- Indices validos para uma lista nao-vazia sao numeros naturais estritamente
+-- menores que o comprimento da lista, ou seja, menor ou igual ao comprimento
+-- da cauda.
+
+-- Definicao de indice dentro dos limites usando `abbrev` porque tactics sabem
+-- resolver desigualdades numericas, mas nao conhecem nomes customizados:
+abbrev NonEmptyList.inBounds (xs : NonEmptyList α) (i : Nat) : Prop :=
+  i ≤ xs.tail.length
+
+-- Esta funcao retorna uma proposicao que pode ser verdadeira ou falsa:
+theorem atLeastThreeSpiders : idahoSpiders.inBounds 2 := by decide
+
+theorem notSixSpiders : ¬idahoSpiders.inBounds 5 := by decide
+-- Operador de negacao logica `¬` tem precedencia muito baixa:
+-- `¬idahoSpiders.inBounds 5` eh equivalente a `¬(idahoSpiders.inBounds 5)`
+
+-- Funcao de lookup que requer evidencia de que o indice eh valido,
+-- portanto nao precisa retornar Option:
+def NonEmptyList.get (xs : NonEmptyList α)
+    (i : Nat) (ok : xs.inBounds i) : α :=
+  match i with
+  | 0 => xs.head
+  | n + 1 => xs.tail[n]
+
+-- Esta funcao delega para a versao de List que checa evidencia em compile time.
+-- Eh possivel escrever esta funcao para usar a evidencia diretamente, mas
+-- requer tecnicas para trabalhar com provas e proposicoes (descritas mais tarde).
+
+-- Com def: tactics nao enxergam automaticamente
+def BadInBounds (xs : NonEmptyList α) (i : Nat) : Prop :=
+  i ≤ xs.tail.length
+
+theorem bad : BadInBounds idahoSpiders 2 := by
+  -- Decide falharia aqui, precisa fazer `unfold BadInBounds`.
+  unfold BadInBounds
+  decide
+
+-- Com abbrev: tactics enxergam direto
+abbrev GoodInBounds (xs : NonEmptyList α) (i : Nat) : Prop :=
+  i ≤ xs.tail.length
+
+theorem good : GoodInBounds idahoSpiders 2 := by
+  decide
+
+
+-- 3.4.3. Overloading Indexing
+
+-- Notacao de indexacao para um tipo de colecao (`xs[i]`, `xs[i]?`, `xs[i]!`,
+--`xs[i]'p`) pode ser overloaded definindo uma instance da type class `GetElem`.
+
+class GetElem'
+    (coll : Type)
+    (idx : Type)
+    (item : outParam Type)
+    (inBounds : outParam (coll → idx → Prop)) where
+  getElem : (c : coll) → (i : idx) → inBounds c i → item
+
+-- GetElem tem quatro parametros:
+-- 1. coll: tipo da colecao
+-- 2. idx: tipo do indice
+-- 3. item: tipo dos elementos extraidos (outParam)
+-- 4. inBounds: funcao que determina evidencia de indice valido (outParam)
+
+-- Metodo `getElem` que recebe:
+-- - valor da colecao
+-- - valor do indice
+-- - evidencia de que o indice esta dentro dos limites
+-- e retorna um elemento.
+
+-- Para NonEmptyList α, os parametros sao:
+-- - colecao: NonEmptyList α
+-- - indices: Nat
+-- - elementos: α
+-- - inBounds: indice ≤ comprimento da cauda
+
+-- A instance pode delegar diretamente para NonEmptyList.get:
+instance : GetElem (NonEmptyList α) Nat α NonEmptyList.inBounds where
+  getElem := NonEmptyList.get
+
+#eval idahoSpiders[0]
+#eval idahoSpiders[2]
+#eval idahoSpiders[9]
+
+-- Como tipo de colecao e tipo de indice sao parametros de INPUT, novos tipos
+-- podem ser usados para indexar colecoes existentes. Ex:
+
+-- Pos como indice para List (nao pode apontar para primeira entrada):
+instance : GetElem (List α) Pos α (fun list n => list.length > n.toNat) where
+  getElem (xs : List α) (i : Pos) _ := xs[i.toNat]
+
+-- Bool como indice para PPoint (false = x, true = y):
+instance : GetElem (PPoint α) Bool α (fun _ _ => True) where
+  getElem (p : PPoint α) (i : Bool) _ :=
+    if not i then p.x else p.y
+
+#eval ({x := 10, y := 20} : PPoint Nat)[false]
+#eval ({x := 10, y := 20} : PPoint Nat)[true]
+
+-- Neste caso, ambos os Booleans sao indices validos. Como todo Bool possivel (2)
+-- esta in bounds (PPoint tem 2 elementos), a evidencia eh simplesmente a proposicao
+-- verdadeira `True`.
+
+
+-- 3.5. Standard Classes
+
+-- Alguns operadores e funcoes que podem ser overloaded usando type classes.
+-- Cada operador ou funcao corresponde a um metodo de uma type class. Fazer overload
+-- para novos tipos nao eh feito usando o operador em si, mas sim o nome.
+
+
+-- 3.5.1. Arithmetic
+
+-- A maioria dos operadores aritmeticos esta disponivel em forma heterogenea,
+-- (argumentos podem ter tipos diferentes) e um parametro de saida decide o tipo
+-- da expressao resultante. Para cada operador heterogeneo, existe uma versao
+-- homogenea (sem "h") correspondente.
+
+#check HAdd.hAdd  -- (x + y)
+#check HSub.hSub  -- (x - y)
+#check HMul.hMul  -- (x * y)
+#check HDiv.hDiv  -- (x / y)
+#check HMod.hMod  -- (x % y)
+#check HPow.hPow  -- (x ^ y)
+#check Neg.neg    -- (- x  )
+
+
+-- 3.5.2. Bitwise Operators
+
+-- Ha instances para tipos de largura fixa como:
+-- - UInt8,  Int8
+-- - UInt16, Int16
+-- - UInt32, Int32
+-- - UInt64, Int64
+-- - USize : word size na plataforma atual (32 ou 64)
+
+#check HAnd.hAnd  -- (x &&& y)
+#check HOr.hOr    -- (x ||| y)
+#check HXor.hXor  -- (x ^^^ y)`
+#check Complement.complement    -- (~~~x   )
+#check HShiftRight.hShiftRight  -- (x >>> y)
+#check HShiftLeft.hShiftLeft    -- (x <<< y)
+
+-- Como os nomes `And` e `Or` ja sao usados pelos operadores logicos, as versoes
+-- homogeneas do `HAnd` e `HOr` se chamam: `AndOp` e `OrOp`.
+
+
+-- 3.5.3. Equality and Ordering
