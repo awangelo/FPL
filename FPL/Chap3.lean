@@ -537,7 +537,7 @@ instance [Add α] : Add (PPoint α) where
 -- 3.2.3. Methods and Implicit Arguments
 
 #check @OfNat.ofNat
--- mas na declaração do metodo, ofNat tem apenas tipo α.
+-- mas na declaracao do metodo, ofNat tem apenas tipo α.
 
 -- Declarar uma type class cria:
 -- 1. Estrutura contendo implementacoes das operacoes.
@@ -959,3 +959,443 @@ instance : GetElem (PPoint α) Bool α (fun _ _ => True) where
 
 
 -- 3.5.3. Equality and Ordering
+
+-- Testar igualdade de dois valores tipicamente usa a classe `BEq` (Boolean Equality).
+-- Devido ao uso do Lean como provador de teoremas, existem dois tipos de
+-- operadores de igualdade em Lean:
+
+-- 1. BOOLEAN EQUALITY (==):
+
+-- Eh o mesmo tipo de igualdade encontrado em outras linguagens de programacao.
+-- Eh uma funcao que recebe dois valores e retorna um Bool.
+-- A expressao `x == y` eh igual a `BEq.beq x y`.
+#check BEq
+
+-- Como Lean eh uma linguagem funcional pura, nao ha nocao separada de igualdade
+-- de referencia vs valor - ponteiros nao podem ser observados diretamente.
+
+#eval "Octopus" == "Cuttlefish"
+#eval "Octopodes" == "Octo".append "podes"
+
+-- Alguns valores, como funcoes, NAO podem ser checados por igualdade:
+#check (fun (x : Nat) => 1 + x) == (Nat.succ ·)
+
+-- 2. PROPOSITIONAL EQUALITY (=):
+
+-- Igualdade proposicional eh uma afirmacao matematica ao inves de uma invocacao
+-- de um programa. Como proposicoes sao como tipos que descrevem evidencia para
+-- alguma afirmacao, igualdade proposicional tem mais em comum com tipos como
+-- `String` e `Nat → List Int` do que com igualdade booleana.
+
+-- Isso significa que ela nao pode ser automaticamente checada. No entanto, a
+-- igualdade de quaisquer duas expressoes pode ser afirmada em Lean, desde que
+-- tenham o mesmo tipo.
+
+#check (fun (x : Nat) => 1 + x) = (Nat.succ ·)
+-- Essa eh uma afirmacao perfeitamente razoavel. Do ponto de vista da matematica,
+-- duas funcoes sao iguais se mapeiam entradas iguais para saidas iguais, entao
+-- da pra perceber que essa afirmacao eh verdadeira, mesmo que o Lean precise de
+-- uma prova de uma linha para ser convencido.
+
+-- Algumas proposicoes sao _decidable_, o que significa que podem ser checadas
+-- assim como uma funcao booleana. A funcao que checa se a proposicao eh verdadeira
+-- ou falsa eh chamada de decision procedure (procedimento de decisao), e retorna
+-- evidencia da verdade ou falsidade da proposicao.
+
+-- Exemplos de proposicoes decidiveis incluem:
+-- - Igualdade e desigualdade de numeros naturais
+-- - Igualdade de strings
+-- - "ands" e "ors" de proposicoes que sao elas mesmas decidiveis
+
+-- Em Lean, `if` funciona com proposicoes decidiveis. Por exemplo, `2 < 4`
+-- eh uma proposicao:
+
+#check 2 < 4
+
+#eval if 2 < 4 then 1 else 2
+
+-- _Nao_ todas as proposicoes sao decidiveis. Se fossem, entao computadores
+-- poderiam provar qualquer proposicao verdadeira apenas executando o procedimento
+-- de decisao, e matematicos estariam sem emprego.
+
+-- Mais especificamente, proposicoes decidiveis tem uma instance da type class
+-- `Decidable`, que contem o procedimento de decisao. Tentar usar uma proposicao
+-- que nao eh decidivel como se fosse um Bool resulta em falha ao encontrar a
+-- instance Decidable.
+
+#check if (fun (x : Nat) => 1 + x) = (Nat.succ ·) then "yes" else "no"
+
+-- As seguintes proposicoes, que geralmente sao decidiveis, sao overloaded
+-- com type classes:
+
+-- | Expression | Desugaring      | Class Name |
+-- |------------|-----------------|------------|
+-- | x < y      | LT.lt x y       | LT         |
+-- | x ≤ y      | LE.le x y       | LE         |
+-- | x > y      | LT.lt y x       | LT         |
+-- | x ≥ y      | LE.le y x       | LE         |
+
+#check LT
+#check LE
+
+-- Como definir novas proposicoes ainda nao foi demonstrado, pode ser dificil
+-- definir instances completamente novas de LT e LE. Mas, elas podem ser
+-- definidas usando instances existentes.
+
+instance : LT Pos where
+  lt x y := LT.lt x.toNat y.toNat
+
+instance : LE Pos where
+  le x y := LE.le x.toNat y.toNat
+
+-- Essas proposicoes _nao_ sao decidiveis por padrao porque Lean nao expande as
+-- definicoes de proposicoes ao sintetizar uma instance. Isso pode ser resolvido
+-- usando o operador `inferInstanceAs`, que encontra uma instance para uma dada
+-- classe se ela existir:
+
+instance {x : Pos} {y : Pos} : Decidable (x < y) :=
+  inferInstanceAs (Decidable (x.toNat < y.toNat))
+
+instance {x : Pos} {y : Pos} : Decidable (x ≤ y) :=
+  inferInstanceAs (Decidable (x.toNat ≤ y.toNat))
+
+-- Comparar valores usando `<`, `==` e `>` pode ser ineficiente. Checar primeiro
+-- se um valor eh menor que outro, e depois se sao iguais, pode requerer duas
+-- travessias sobre grandes estruturas de dados.
+
+-- Para resolver esse problema, Java e C# tem metodos padrao `compareTo` e
+-- `CompareTo` (respectivamente) que podem ser overridden por uma classe para
+-- implementar todas as tres operacoes ao mesmo tempo. Esses metodos retornam
+-- um inteiro negativo se o receptor eh menor que o argumento, zero se sao
+-- iguais, e um inteiro positivo se o receptor eh maior que o argumento.
+
+-- Ao inves de fazer overload do significado de inteiros, Lean tem um tipo
+-- indutivo built-in que descreve essas tres possibilidades:
+
+inductive Ordering' where
+  | lt
+  | eq
+  | gt
+
+#check Ordering
+
+-- A type class `Ord` pode ser overloadada para produzir essas comparacoes.
+
+def Pos.comp : Pos → Pos → Ordering
+  | Pos.one, Pos.one => Ordering.eq
+  | Pos.one, Pos.succ _ => Ordering.lt
+  | Pos.succ _, Pos.one => Ordering.gt
+  | Pos.succ n, Pos.succ k => comp n k
+
+instance : Ord Pos where
+  compare := Pos.comp
+
+#eval Ord.compare (3 : Pos) (5 : Pos)
+#eval Ord.compare (7 : Pos) (5 : Pos)
+#eval Ord.compare (5 : Pos) (5 : Pos)
+
+
+-- 3.5.4. Hashing
+
+-- Java e C# tem metodos `hashCode` e `GetHashCode`, respectivamente, que
+-- computam um hash de um valor para uso em estruturas de dados como hash tables.
+-- O equivalente em Lean eh uma type class chamada `Hashable`:
+
+class Hashable' (α : Type) where
+  hash : α → UInt64
+
+#check Hashable
+
+-- Se dois valores sao considerados iguais de acordo com uma instance `BEq`
+-- para seu tipo, entao eles _devem_ ter os mesmos hashes.
+
+-- A stdlib contem uma funcao `mixHash` com tipo `UInt64 → UInt64 → UInt64`
+-- que pode ser usada para combinar hashes de diferentes campos de um construtor.
+
+#check mixHash
+
+-- Uma funcao de hash razoavel para um datatype indutivo pode ser escrita
+-- atribuindo um numero unico para cada construtor, e entao misturando esse
+-- numero com os hashes de cada campo.
+
+def hashPos : Pos → UInt64
+  | Pos.one => 0
+  | Pos.succ n => mixHash 1 (hashPos n)
+
+instance : Hashable Pos where
+  hash := hashPos
+
+#eval hash (7 : Pos)
+#eval hash (42 : Pos)
+
+-- Instances de Hashable para tipos polimorficos podem usar busca recursiva
+-- de instances. Fazer hash de um `NonEmptyList α` so eh possivel quando
+-- `α` pode ser hasheado:
+
+instance [Hashable α] : Hashable (NonEmptyList α) where
+  hash xs := mixHash (hash xs.head) (hash xs.tail)
+
+-- Arvores binarias usam tanto recursao quanto busca recursiva de instances
+-- nas implementacoes de BEq e Hashable:
+
+inductive BinTree (α : Type) where
+  | leaf : BinTree α
+  | branch : BinTree α → α → BinTree α → BinTree α
+
+-- BEq para BinTree: compara estrutura recursivamente
+def eqBinTree [BEq α] : BinTree α → BinTree α → Bool
+  | BinTree.leaf, BinTree.leaf =>
+    true
+  | BinTree.branch l x r, BinTree.branch l2 x2 r2 =>
+    x == x2 && eqBinTree l l2 && eqBinTree r r2
+  | _, _ =>
+    false
+
+instance [BEq α] : BEq (BinTree α) where
+  beq := eqBinTree
+
+def hashBinTree [Hashable α] : BinTree α → UInt64
+  | BinTree.leaf =>
+    0
+  | BinTree.branch left x right =>
+    mixHash 1
+            (mixHash (hashBinTree left)
+                     (mixHash (hash x)
+                              (hashBinTree right)))
+
+instance [Hashable α] : Hashable (BinTree α) where
+  hash := hashBinTree
+
+def exampleTree₁ : BinTree Nat :=
+  BinTree.branch
+    (BinTree.branch BinTree.leaf 1 BinTree.leaf)
+    2
+    (BinTree.branch BinTree.leaf 3 BinTree.leaf)
+
+def exampleTree₂ : BinTree Nat :=
+  BinTree.branch
+    (BinTree.branch BinTree.leaf 1 BinTree.leaf)
+    2
+    (BinTree.branch BinTree.leaf 4 BinTree.leaf)  -- diferente aqui
+
+#eval hash exampleTree₁
+#eval hash exampleTree₂
+#eval hash exampleTree₁ == hash exampleTree₂
+
+
+-- 3.5.5. Deriving Standard Classes
+
+-- Instances de classes como `BEq` e `Hashable` sao frequentemente muito
+-- tediosas de implementar manualmente. Lean inclui uma feature chamada
+-- "instance deriving" que permite ao compilador construir automaticamente
+-- instances de muitas type classes. De fato, a frase `deriving Repr` na
+-- definicao de Firewood na primeira secao sobre polimorfismo eh um exempl
+-- de instance deriving.
+
+-- Instances podem ser derivadas de duas formas:
+-- 1. Quando definindo uma sctructure ou inductive type, adicionando
+--    `deriving` no final da declaracao do tipo seguido pelos nomes das
+--    classes que serao derivadas:
+inductive Color where
+  | red
+  | green
+  | blue
+  deriving Repr, BEq, Hashable
+
+#eval Color.red
+#eval Color.red == Color.blue
+#eval hash Color.green
+
+-- 2. Para um tipo ja definido, escreva `deriving instance C1, C2 for T`
+--    para derivar instances de C1 e C2 para o tipo T:
+deriving instance BEq, Hashable for Pos
+deriving instance BEq, Hashable for NonEmptyList
+
+#eval (5 : Pos) == (7 : Pos)
+def list1 : NonEmptyList Nat := {head := 1, tail := [2, 3]}
+#eval hash list1
+
+-- Instances podem ser derivadas para pelo menos as seguintes classes:
+-- * Inhabited : valores default
+-- * BEq       : igualdade booleana
+-- * Repr      : representacao
+-- * Hashable  : funcao hash
+-- * Ord       : ordenacao (comparacao)
+
+structure Example where
+  field1 : Nat
+  field2 : String
+  deriving Inhabited, BEq, Repr, Hashable, Ord
+
+#eval (default : Example)  -- Inhabited
+#eval Example.mk 1 "a" == Example.mk 1 "a"  -- BEq
+#eval repr (Example.mk 1 "a")  -- Repr
+#eval hash (Example.mk 1 "a")  -- Hashable
+#eval compare (Example.mk 1 "a") (Example.mk 2 "b")  -- Ord
+
+-- Em alguns casos, a instance Ord derivada pode nao produzir precisamente
+-- a ordenacao desejada em uma aplicacao. Quando esse eh o caso, eh aceitavel
+-- escrever uma instance Ord manualmente.
+
+structure Person where
+  name : String
+  age : Nat
+  deriving BEq, Repr, Hashable
+
+-- Ord customizado (por idade ao inves de ordem lexicografica):
+instance : Ord Person where
+  compare p1 p2 := compare p1.age p2.age
+
+def alice : Person := {name := "Alice", age := 30}
+def bob : Person := {name := "Bob", age := 25}
+
+#eval compare alice bob
+
+-- Derivar de instancias tambem facilita a manutencao do codigo, pois as
+-- instancias sao atualizadas a medida que as definicoes dos tipos evoluem.
+-- Ao revisar as alteracoes no codigo, as modificacoes que envolvem atualizacoes
+-- nos tipos de dados sao muito mais faceis de ler, sem linhas e mais linhas de
+-- modificacoes nas implementacoes das instances.
+
+
+-- 3.5.6. Appending
+
+-- Datatypes que fazem appending implementam a typeclass `HAppend`, que eh uma
+-- operacao heterogenea. Implementala habilita o uso do `++`.
+
+#check HAppend
+
+-- Para casos casos homogeneos a implementacao geralmente segue o padrao:
+instance : Append (NonEmptyList α) where
+  append xs ys :=
+    { head := xs.head, tail := xs.tail ++ ys.head :: ys.tail }
+
+#eval idahoSpiders ++ idahoSpiders
+
+-- Essa instance de HAppend permite append de listas nao vazias com listas
+-- normais (o que sempre gera uma lista nao vazia):
+
+instance : HAppend (NonEmptyList α) (List α) (NonEmptyList α) where
+  hAppend xs ys :=
+    { head := xs.head, tail := xs.tail ++ ys }
+
+#eval idahoSpiders ++ ["Trapdoor Spider"]
+
+
+-- 3.5.7. Functors
+
+-- Um tipo polimorfico eh um functor se tem um overload para uma funcao
+-- chamada `map` que transforma cada elemento contido nele por uma funcao.
+
+#check Functor
+
+-- Exemplos de functors e como suas instances Functor fazem overload de map:
+-- - Mapear sobre lista constroi nova lista com cada entrada transformada
+-- - Mapear sobre Option: `none` inalterado, `some x` vira `some (f x)`
+
+#eval Functor.map (· + 5) [1, 2, 3]
+#eval Functor.map toString (some (List.cons 5 List.nil))
+#eval Functor.map List.reverse [[1, 2, 3], [4, 5, 6]]
+
+-- Como `Functor.map` eh um nome longo para uma operacao comum, Lean fornece
+-- um operador infix para mapear uma funcao: `<$>`
+
+#eval (· + 5) <$> [1, 2, 3]
+#eval toString <$> (some (List.cons 5 List.nil))
+#eval List.reverse <$> [[1, 2, 3], [4, 5, 6]]
+
+-- Instance de Functor para NonEmptyList:
+instance : Functor NonEmptyList where
+  map f xs := { head := f xs.head, tail := f <$> xs.tail }
+
+-- Aqui, map usa a instance Functor para List para mapear a funcao sobre a cauda.
+-- A instance eh definida para `NonEmptyList` ao inves de `NonEmptyList α` porque
+-- um functor eh uma "funcao" com tipo: `Type u → Type v` (nesse caso o
+-- construtor `NonEmptyList`), assim como o map tem tipo `(α → β) → f α → f β`.
+
+-- Aqui, map usa a instance Functor para List para mapear a funcao sobre a cauda.
+-- A instance eh definida para `NonEmptyList` ao inves de `NonEmptyList α` porque
+-- um functor eh uma "funcao de tipo para tipo" (type constructor): `Type → Type`.
+--   `NonEmptyList`: construtor de tipo,
+--   `(NonEmptyList α)`: tipo completo.
+
+#check @NonEmptyList
+
+-- Se α fosse um parametro da classe, seria possivel fazer versoes de Functor
+-- que so funcionassem para NonEmptyList Nat, mas parte de ser um functor eh
+-- que map funciona para qualquer tipo de entrada.
+
+instance : Functor PPoint where
+  map f p := { x := f p.x, y := f p.y }
+
+-- Neste caso, f foi aplicado tanto em x quanto em y.
+
+-- Mesmo quando o tipo contido em um functor eh ele mesmo um functor, mapear
+-- uma funcao so desce um nivel. Ao usar map em `NonEmptyList (PPoint Nat)`,
+-- a funcao sendo mapeada deve receber PPoint Nat como argumento, nao Nat.
+
+-- A definicao da classe Functor usa mais uma feature de linguagem que ainda
+-- nao foi discutida: _definicoes de metodo default_. Normalmente, uma classe
+-- especifica algum conjunto minimo de metodos overloadable, e entao usa funcoes
+-- polimorficas com argumentos de instance implicitos (nesse caso o concat)
+-- para fornecer uma gama maior de features.
+
+-- A funcao concat pode concatenar qualquer lista nao-vazia cujas entradas
+-- sao appendable:
+def concat [Append α] (xs : NonEmptyList α) : α :=
+  let rec catList (start : α) : List α → α
+    | [] => start
+    | (z :: zs) => catList (start ++ z) zs
+  catList xs.head xs.tail
+
+-- Porem, para algumas classes, ha operacoes que podem ser implementadas mais
+-- eficientemente com conhecimento dos internals de um datatype.
+
+-- Nesses casos, uma definicao de metodo default pode ser fornecida. Uma
+-- definicao de metodo default fornece uma implementacao default de um metodo
+-- em termos dos outros metodos. Porem, implementadores de instance podem
+-- escolher fazer override desse default com algo mais eficiente.
+
+-- _Definicoes de metodo default contem `:=` na definicao da classe._
+
+-- No caso de Functor, alguns tipos tem uma maneira mais eficiente de implementar
+-- map quando a funcao sendo mapeada ignora seu argumento. Funcoes que ignoram
+-- seus argumentos sao chamadas funcoes constantes porque sempre retornam o
+-- mesmo valor.
+
+-- Aqui esta a definicao de Functor, onde `mapConst` tem implementacao default:
+class Functor' (f : Type → Type) where
+  map : {α β : Type} → (α → β) → f α → f β
+
+  mapConst {α β : Type} (x : α) (coll : f β) : f α :=
+    map (fun _ => x) coll
+
+-- Especificamente, instances Functor devem seguir duas regras:
+
+-- 1. Mapear a funcao identidade deve resultar no argumento original.
+--      _`id <$> x` deve ser igual a `x`_
+
+#eval id <$> [1,2,0] = [1,2,0]
+
+-- 2. Mapear duas funcoes compostas deve ter o mesmo efeito que compor seu mapping.
+--      _For all functions `h : β → γ` and `g : α → β`, `(h ∘ g) <$> v = h <$> g <$> v`_
+
+#eval ((· * 2) ∘ (· + 2)) <$> [1,2,3] =
+      (· * 2) <$> (· + 2) <$> [1,2,3]
+
+-- Essas regras previnem implementacoes de map que movem os dados ou deletam
+-- alguns deles.
+
+/-
+  * A operacao que define um functor eh um "mapeamento" (transformacao) de um
+    objeto X dentro de uma estrutura C para um objeto F(X) dentro de uma estrutura D.
+  * Contrutores de tipos polimorficos sao functors caso implementem `map` seguindo
+    as duas propiedades dos functors.
+  * Ex:
+      - `List` eh um functor.
+      - A funcao `NonEmptyList` (construtor do tipo `NonEmptyList`) em um functor.
+      - `List α` _nao_ eh um functor.
+-/
+
+
+-- 3.5.8. Messages You May Meet
