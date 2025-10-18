@@ -1,3 +1,5 @@
+import Lean.Data.Json
+
 -- 3. Overloading and Type Classes
 
 -- Type classes (pioneiradas em Haskell) permitem overloading de operadores,
@@ -1387,15 +1389,722 @@ class Functor' (f : Type → Type) where
 -- alguns deles.
 
 /-
+  * _Functor pode ser entendido como a dupla do contrutor de tipo e map, de forma que_
+    _o primeiro mapeia objetos (tipos), e o segundo mapeia morfismos (funcoes)._
   * A operacao que define um functor eh um "mapeamento" (transformacao) de um
     objeto X dentro de uma estrutura C para um objeto F(X) dentro de uma estrutura D.
   * Contrutores de tipos polimorficos sao functors caso implementem `map` seguindo
-    as duas propiedades dos functors.
+    as duas leis dos functors.
   * Ex:
       - `List` eh um functor.
-      - A funcao `NonEmptyList` (construtor do tipo `NonEmptyList`) em um functor.
+      - A funcao `NonEmptyList` (construtor do tipo `NonEmptyList`) eh um functor.
       - `List α` _nao_ eh um functor.
 -/
 
 
 -- 3.5.8. Messages You May Meet
+
+-- Lean pode nao ser capaz de derivar algumas instancias para certas classes:
+
+deriving instance ToString for NonEmptyList
+
+-- Chamar `deriving instance` faz o Lean consultar uma tabela interna que faz code
+-- generation para instancias de typeclass, essa mensagem significa que nenhum code
+-- generator foi encontrado para `ToString`.
+
+
+-- 3.5.9. Exercises
+
+-- Write an instance of HAppend (List α) (NonEmptyList α) (NonEmptyList α) and test it.
+
+instance : HAppend (List α) (NonEmptyList α) (NonEmptyList α) where
+  hAppend xs ys :=
+    match xs with
+    | [] => ys
+    | x' :: xs' => { head := x', tail := xs' ++ ys.head :: ys.tail }
+    -- Mesma coisa que `xs' ++ (ys.head :: ys.tail)`, precedencia de `::` eh maior.
+
+-- Implement a Functor instance for the binary tree datatype.
+
+instance : Functor BinTree where
+  map f tree :=
+    let rec fmap
+      | BinTree.leaf => BinTree.leaf
+      | BinTree.branch l x r => BinTree.branch (fmap l) (f x) (fmap r)
+      -- ⟨(fmap l), (f x), (fmap r)⟩ nao pode ser usado para um tipo indutivo com
+      --   mais de um contrutor.
+    fmap tree
+
+#eval (· + 1) <$> exampleTree₁
+
+
+-- 3.6. Coercions
+
+-- Em matematica eh comum utilizar o mesmo simbolo para diferentes aspectos de
+-- algum objeto em contextos diferentes. Por exemplo, se um ring eh referenciado
+-- em um contexto onde um conjunto eh esperado, entende-se que o conjunto
+-- subjacente do ring eh o que deve ser usado.
+
+-- Em linguagens de programacao, eh comum ter regras para traduzir automaticamente
+-- valores de um tipo para valores de outro tipo. Java permite que um byte seja
+-- automaticamente promovido para um int, e Kotlin permite que um tipo nao-nulo
+-- seja usado em um contexto que espera a versao nulavel do tipo.
+
+-- Em Lean, ambos os propositos sao servidos por um mecanismo chamado _coercions_.
+-- Quando Lean encontra uma expressao de um tipo em um contexto que espera um
+-- tipo diferente, ele tentara fazer coercion da expressao antes de reportar um
+-- erro de tipo.
+
+
+-- 3.6.1. Strings and Paths
+
+-- No codigo fonte do feline, uma String era convertida para FilePath usando
+-- sintaxe de construtor anonimo (`⟨fileName⟩`). Mas isso nao era necessario:
+-- Lean define uma coercion de String para FilePath, entao uma string pode ser
+-- usada em uma posicao onde um path eh esperado.
+
+-- Mesmo que a funcao IO.FS.readFile tenha tipo `System.FilePath → IO String`,
+-- o seguinte codigo eh aceito pelo Lean:
+
+def fileDumper : IO Unit := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  stdout.putStr "Which file? "
+  stdout.flush
+  let f := (← stdin.getLine).trim
+  stdout.putStrLn s!"'The file {f}' contains:"
+  stdout.putStrLn (← IO.FS.readFile f)
+
+-- String.trim remove espacos em branco no inicio e fim de uma string.
+-- Na ultima linha de fileDumper, a coercion de String para FilePath converte
+-- automaticamente `f`, entao nao eh necessario escrever `IO.FS.readFile ⟨f⟩`.
+
+
+-- 3.6.2. Positive Numbers
+
+-- Todo numero positivo corresponde a um numero natural. A funcao Pos.toNat
+-- que foi definida anteriormente converte um Pos para o Nat correspondente:
+
+#check Pos.toNat
+
+-- A funcao List.drop, remove um prefixo de uma lista. Aplicar List.drop a um
+-- Pos, porem, leva a um erro de tipo:
+
+#check [1, 2, 3, 4].drop (2 : Pos)
+
+-- Como o autor de List.drop nao a tornou um metodo de uma type class, ela
+-- nao pode ser overridden definindo uma nova instance.
+
+-- A type class `Coe` descreve maneiras overloaded de fazer coercion de um
+-- tipo para outro:
+
+#check Coe
+
+-- Uma instance de `Coe Pos Nat` eh suficiente para permitir que o codigo
+-- anterior funcione:
+
+instance : Coe Pos Nat where
+  coe x := x.toNat
+
+-- Usar #check mostra o resultado da busca de instance que foi usada.
+#eval [1, 2, 3, 4].drop (2 : Pos)
+#check [1, 2, 3, 4].drop (2 : Pos)
+
+-- A instance eh definida apenas para `Pos → Nat` nao `Nat → Pos`.
+#check ((1 : Pos) : Nat)
+#check ((1 : Nat) : Pos)
+
+
+-- 3.6.3. Chaining Coercions
+
+-- Ao buscar por coercions, Lean tentara montar uma coercion a partir de uma
+-- cadeia de coercions menores. Por exemplo, ja existe uma coercion de Nat para Int.
+-- Por causa dessa instance, combinada com a instance `Coe Pos Nat`, o seguinte
+-- codigo eh aceito:
+
+def oneInt : Int := Pos.one
+
+-- Essa definicao usa duas coercions: de Pos para Nat, e entao de Nat para Int.
+
+-- O compilador do Lean nao trava na presenca de coercions circulares. Por exemplo,
+-- mesmo se dois tipos A e B podem ser coercidos um para o outro, suas coercions
+-- mutuas podem ser usadas para encontrar um caminho:
+
+inductive A where
+  | a
+
+inductive B where
+  | b
+
+instance : Coe A B where
+  coe _ := B.b
+
+instance : Coe B A where
+  coe _ := A.a
+
+instance : Coe Unit A where
+  coe _ := A.a
+
+def coercedToB : B := ()
+
+-- Lembrete: os parenteses duplos () eh abreviacao para o construtor Unit.unit.
+-- Apos derivar uma instance Repr B:
+deriving instance Repr for B
+
+#eval coercedToB
+#eval (coercedToB : A)
+
+-- A biblioteca padrao do Lean define uma coercion de qualquer tipo α para
+-- Option α que envolve o valor em some. Isso permite que o some seja omitido.
+
+-- Por exemplo, a funcao List.last? que encontra a ultima entrada em uma lista
+-- pode ser escrita sem um some ao redor do valor de retorno x:
+
+def List.last? : List α → Option α
+  | [] => none
+  | [x] => x
+  | _ :: x :: xs => last? (x :: xs)
+
+-- A busca de instance encontra a coercion, e insere uma chamada para coe, que
+-- envolve o argumento em some. Essas coercions podem ser encadeadas, de forma
+-- que usos aninhados de Option nao requerem construtores some aninhados:
+
+def perhapsPerhapsPerhaps : Option (Option (Option String)) :=
+  "Please don't tell me"
+
+-- Coercions so sao ativadas automaticamente quando Lean encontra uma incompatibilidade
+-- entre um tipo inferido e um tipo que eh imposto pelo resto do programa. Em casos
+-- com outros erros, coercions nao sao ativadas.
+
+-- Por exemplo, se o erro eh que uma instance esta faltando, coercions nao serao usadas:
+
+def perhapsPerhapsPerhapsNat : Option (Option (Option Nat)) :=
+  392
+
+-- Numerais sao polimorficos em Lean, mas o numeral `392` nao pode ser usado em
+-- um contexto onde o tipo esperado eh Option (Option (Option Nat)) devido a
+-- ausencia da instance OfNat correspondente.
+
+-- Isso pode ser contornado indicando manualmente o tipo desejado para ser usado
+-- com OfNat:
+
+def perhapsPerhapsPerhapsNat' : Option (Option (Option Nat)) :=
+  (392 : Nat)
+
+-- Adicionalmente, coercions podem ser inseridas manualmente usando uma seta
+-- para cima (↑):
+
+def perhapsPerhapsPerhapsNat'' : Option (Option (Option Nat)) :=
+  ↑(392 : Nat)
+
+-- Em alguns casos, isso pode ser usado para garantir que Lean encontre as
+-- instances corretas. Tambem pode tornar as intencoes do programador mais claras.
+
+
+-- 3.6.4. Non-Empty Lists and Dependent Coercions
+
+-- Uma instance de `Coe α β` faz sentido quando o tipo β tem um valor que pode
+-- representar cada valor do tipo α. Fazer coercion de Nat para Int faz sentido,
+-- porque o tipo Int contem todos os numeros naturais, mas uma coercion de Int
+-- para Nat eh uma ma ideia porque Nat nao contem os numeros negativos.
+
+-- Similarmente, uma coercion de listas nao-vazias para listas comuns faz sentido
+-- porque o tipo List pode representar toda lista nao-vazia:
+
+instance : Coe (NonEmptyList α) (List α) where
+  coe xs := xs.head :: xs.tail
+
+-- Isso permite que listas nao-vazias sejam usadas com toda a API de List.
+
+-- Por outro lado, eh impossivel escrever uma instance de `Coe (List α) (NonEmptyList α)`,
+-- porque nao existe uma lista nao-vazia que possa representar a lista vazia.
+-- Essa limitacao pode ser contornada usando outra versao de coercions, chamadas
+-- de _dependent coercions_.
+
+-- Dependent coercions podem ser usadas quando a habilidade de fazer coercion
+-- de um tipo para outro depende de qual valor particular esta sendo convertido.
+-- Assim como a type class OfNat recebe o Nat particular sendo overloaded como
+-- parametro, dependent coercion recebe o valor sendo convertido como parametro:
+
+#check CoeDep
+
+-- Por exemplo, qualquer List que tem pelo menos um valor (`x :: xs`) pode
+-- ser convertida para uma NonEmptyList:
+
+instance : CoeDep (List α) (x :: xs) (NonEmptyList α) where
+  coe := { head := x, tail := xs }
+
+-- A implementacao/contrutor do tipo (`x :: xs` nesse caso) que tem coercion
+-- valida eh passado como argumento para a instance, assim, a instance funciona
+-- apenas para o caso valido (e nao para `nil`).
+
+def validCoercion : NonEmptyList Nat := [1, 2, 3]
+def invalidCoercion : NonEmptyList Nat := []
+
+
+-- 3.6.5. Coercing to Types
+
+-- Em matematica, eh comum ter um conceito que consiste de um conjunto equipado
+-- com estrutura adicional. Por exemplo, um monoide eh algum conjunto S, um
+-- elemento s de S, e um operador binario associativo em S, tal que s eh neutro
+-- a esquerda e a direita do operador. S eh referido como o "carrier set"
+-- (conjunto subjacente) do monoide.
+
+-- Os numeros naturais com zero e adicao formam um monoide.
+
+-- Monoides tambem sao amplamente usados em programacao funcional: listas, a
+-- lista vazia, e o operador append formam um monoide, assim como strings, a
+-- string vazia, e string append:
+
+structure Monoid where
+  Carrier : Type
+  neutral : Carrier
+  op : Carrier → Carrier → Carrier
+
+def natMulMonoid : Monoid :=
+  { Carrier := Nat, neutral := 1, op := (· * ·) }
+
+def natAddMonoid : Monoid :=
+  { Carrier := Nat, neutral := 0, op := (· + ·) }
+
+def stringMonoid : Monoid :=
+  { Carrier := String, neutral := "", op := String.append }
+
+def listMonoid (α : Type) : Monoid :=
+  { Carrier := List α, neutral := [], op := List.append }
+
+-- Dado um monoide, eh possivel escrever a funcao foldMap que, em uma unica
+-- passagem, transforma as entradas em uma lista para o carrier set do monoide
+-- e entao as combina usando o operador do monoide.
+
+-- Como monoides tem um elemento neutro, ha um resultado natural para retornar
+-- quando a lista esta vazia, e como o operador eh associativo, clientes da
+-- funcao nao precisam se preocupar se a funcao recursiva combina elementos da
+-- esquerda para direita ou da direita para esquerda.
+
+def foldMap (M : Monoid) (f : α → M.Carrier) (xs : List α) : M.Carrier :=
+  let rec go (soFar : M.Carrier) : List α → M.Carrier
+    | [] => soFar
+    | y :: ys => go (M.op soFar (f y)) ys
+  go M.neutral xs
+
+def words := ["hello", "world", "!"]
+
+#eval foldMap natAddMonoid String.length words
+-- = String.length "hello" + String.length "world" + String.length "!"
+-- = 5 + 5 + 1
+
+-- Embora um monoide consista de tres pecas separadas de informacao, eh comum
+-- apenas referir ao nome do monoide para referir ao seu conjunto. Ao inves de
+-- dizer "Seja A um monoide e sejam x e y elementos de seu carrier set", eh
+-- comum dizer "Seja A um monoide e sejam x e y elementos de A".
+
+-- Essa pratica pode ser codificada em Lean definindo um novo tipo de coercion,
+-- do monoide para seu carrier set.
+
+-- A classe `CoeSort` eh como a classe Coe, com a excecao de que o alvo da
+-- coercion deve ser um _sort_, ou seja, Type ou Prop.
+
+-- O termo "sort" em Lean refere-se a esses tipos que classificam outros tipos:
+-- - Type classifica tipos que eles mesmos classificam dados
+-- - Prop classifica proposicoes que elas mesmas classificam evidencia de sua verdade
+
+-- Assim como Coe eh checado quando um type mismatch ocorre, CoeSort eh usado
+-- quando algo diferente de um sort eh fornecido em um contexto onde um sort
+-- seria esperado.
+
+#check CoeSort
+
+-- A coercion de um monoide para seu carrier set extrai o carrier:
+
+instance : CoeSort Monoid Type where
+  coe m := m.Carrier
+
+-- Com essa coercion, as assinaturas de tipo se tornam menos burocraticas:
+
+def foldMap' (M : Monoid) (f : α → M) (xs : List α) : M :=
+  let rec go (soFar : M) : List α → M
+    | [] => soFar
+    | y :: ys => go (M.op soFar (f y)) ys
+  go M.neutral xs
+
+-- Outro exemplo util de CoeSort eh usado para preencher a lacuna entre Bool e Prop.
+-- Como discutido na secao sobre ordenacao e igualdade, a expressao `if` do Lean
+-- espera que a condicao seja uma proposicao decidivel ao inves de um Bool.
+
+-- Programas tipicamente precisam poder fazer branch baseado em valores Boolean.
+-- Ao inves de ter dois tipos de expressao if, a biblioteca padrao do Lean define
+-- uma coercion de Bool para a proposicao de que o Bool em questao eh igual a true:
+
+instance : CoeSort Bool Prop where
+  coe b := b = true
+
+-- Neste caso, o sort em questao eh Prop ao inves de Type.
+
+
+-- 3.6.6. Coercing to Functions
+
+-- Muitos datatypes que ocorrem regularmente em programacao consistem de uma
+-- funcao junto com alguma informacao extra sobre ela. Por exemplo, uma funcao
+-- pode ser acompanhada por um nome para mostrar em logs ou por alguns dados
+-- de configuracao.
+
+-- Adicionalmente, colocar um tipo em um campo de uma structure, similar ao
+-- exemplo do Monoid, pode fazer sentido em contextos onde ha mais de uma
+-- maneira de implementar uma operacao e mais controle manual eh necessario
+-- do que type classes permitiriam.
+
+-- Por exemplo, os detalhes especificos de valores emitidos por um serializador
+-- JSON podem ser importantes porque outra aplicacao espera um formato particular.
+-- As vezes, a funcao em si pode ser derivavel apenas dos dados de configuracao.
+
+-- A type class `CoeFun` pode transformar valores de tipos nao-funcao para tipos
+-- funcao. CoeFun tem dois parametros:
+-- - o primeiro eh o tipo cujos valores devem ser transformados em funcoes
+-- - o segundo eh um parametro de saida que determina exatamente qual tipo de
+--   funcao esta sendo alvo.
+
+#check CoeFun
+
+-- O segundo parametro eh ele mesmo uma funcao que computa um tipo. Em Lean,
+-- tipos sao first-class e podem ser passados para funcoes ou retornados delas,
+-- assim como qualquer outra coisa.
+
+-- Por exemplo, uma funcao que adiciona uma quantidade constante ao seu argumento
+-- pode ser representada como um wrapper ao redor da quantidade a adicionar, ao
+-- inves de definir uma funcao real:
+
+structure Adder where
+  howMuch : Nat
+
+-- Uma funcao que adiciona cinco ao seu argumento tem um 5 no campo howMuch:
+
+def add5 : Adder := ⟨5⟩
+
+-- Esse tipo Adder nao eh uma funcao, e aplica-lo a um argumento resulta em erro:
+
+#check add5 3
+
+-- Definir uma instance CoeFun faz o Lean transformar o adder em uma funcao
+-- com tipo `Nat → Nat`:
+
+instance : CoeFun Adder (fun _ => Nat → Nat) where
+  coe a := (· + a.howMuch)
+
+#eval add5 3
+
+-- Como todos os Adders devem ser transformados em funcoes `Nat → Nat`, o
+-- argumento para o segundo parametro de CoeFun foi ignorado.
+
+-- Quando o valor em si eh necessario para determinar o tipo de funcao correto,
+-- entao o segundo parametro de CoeFun nao eh mais ignorado.
+
+-- Por exemplo, dada a seguinte representacao de valores JSON:
+
+inductive JSON where
+  | true : JSON
+  | false : JSON
+  | null : JSON
+  | string : String → JSON
+  | number : Float → JSON
+  | object : List (String × JSON) → JSON
+  | array : List JSON → JSON
+
+-- Um serializador JSON eh uma structure que rastreia o tipo que ele sabe como
+-- serializar junto com o codigo de serializacao em si:
+
+structure Serializer where
+  Contents : Type
+  serialize : Contents → JSON
+
+-- Um serializador para strings apenas precisa envolver a string fornecida no
+-- construtor JSON.string:
+
+def Str : Serializer :=
+  { Contents := String,
+    serialize := JSON.string
+  }
+
+-- Ver serializadores JSON como funcoes que serializam seu argumento requer
+-- extrair o tipo interno de dados serializaveis:
+
+instance : CoeFun Serializer (fun s => s.Contents → JSON) where
+  coe s := s.serialize
+
+-- Dada essa instance, um serializador pode ser aplicado diretamente a um argumento:
+
+def buildResponse (title : String) (R : Serializer) (record : R.Contents) : JSON :=
+  JSON.object [
+    ("title", JSON.string title),
+    ("status", JSON.number 200),
+    ("record", R record)
+  ]
+
+-- O serializador pode ser passado diretamente para buildResponse:
+
+#eval buildResponse "Functional Programming in Lean" Str "Programming is fun!"
+
+
+/- 3.6.6.1. Aside: JSON as a String -/
+
+-- Pode ser um pouco dificil de entender JSON quando codificado como objetos Lean.
+-- Para ajudar a garantir que a resposta serializada foi o que era esperado, pode
+-- ser conveniente escrever um conversor simples de JSON para String.
+
+-- O primeiro passo eh simplificar a exibicao de numeros. JSON nao distingue entre
+-- inteiros e numeros de ponto flutuante, e o tipo Float eh usado para representar
+-- ambos. Em Lean, Float.toString inclui varios zeros trailing:
+
+#eval (5 : Float).toString  -- "5.000000"
+
+-- A solucao eh escrever uma pequena funcao que limpa a apresentacao removendo
+-- todos os zeros trailing, seguidos por um ponto decimal trailing:
+
+def dropDecimals (numString : String) : String :=
+  if numString.contains '.' then
+    let noTrailingZeros := numString.dropRightWhile (· == '0')
+    noTrailingZeros.dropRightWhile (· == '.')
+  else numString
+
+#eval dropDecimals (5 : Float).toString
+#eval dropDecimals (5.2 : Float).toString
+
+-- O proximo passo eh definir uma funcao helper para fazer append de uma lista de
+-- strings com um separador entre elas:
+
+def String.separate (sep : String) (strings : List String) : String :=
+  match strings with
+  | [] => ""
+  | x :: xs => String.join (x :: xs.map (sep ++ ·))
+
+-- Esta funcao eh util para lidar com elementos separados por virgula em arrays
+-- e objetos JSON.
+#eval ", ".separate ["1", "2"]
+#eval ", ".separate ["1"]
+#eval ", ".separate []
+
+-- Na biblioteca padrao do Lean, essa funcao eh chamada:
+#check String.intercalate
+
+-- Finalmente, um procedimento de escape de string eh necessario para strings JSON,
+-- de forma que a string Lean contendo "Hello!" possa ser exibida como "\"Hello!\"".
+-- Felizmente, o compilador Lean contem uma funcao interna para fazer escape de
+-- strings JSON, chamada Lean.Json.escape. Para acessar essa funcao, adicione
+-- `import Lean` no inicio do arquivo.
+
+-- A funcao que emite uma string de um valor JSON eh declarada partial porque Lean
+-- nao consegue ver que ela termina. Isso ocorre porque chamadas recursivas para
+-- asString ocorrem em funcoes que estao sendo aplicadas por List.map, e esse
+-- padrao de recursao eh complicado o suficiente que Lean nao consegue ver que
+-- as chamadas recursivas estao realmente sendo feitas em valores menores.
+
+-- Em uma aplicacao que apenas precisa produzir strings JSON e nao precisa raciocinar
+-- matematicamente sobre o processo, ter a funcao sendo partial provavelmente nao
+-- causara problemas.
+
+#check Lean.Json.escape
+
+def JSON.asString (val : JSON) : String :=
+  match val with
+  | true => "true"
+  | false => "false"
+  | null => "null"
+  | string s => "\"" ++ Lean.Json.escape s ++ "\""
+  | number n => dropDecimals n.toString
+  | object members =>
+    let memberToString mem :=
+      "\"" ++ Lean.Json.escape mem.fst ++ "\": " ++ asString mem.snd
+    "{" ++ ", ".separate (members.map memberToString) ++ "}"
+  | array elements =>
+    "[" ++ ", ".separate (elements.map asString) ++ "]"
+
+-- Com essa definicao, a saida da serializacao eh mais facil de ler:
+
+#eval (buildResponse "Functional Programming in Lean" Str "Programming is fun!").asString
+
+
+-- 3.6.7. Messages You May Meet
+
+-- Literais de numeros naturais sao overloaded com a type class OfNat. Como
+-- coercions disparam em casos onde tipos nao correspondem, ao inves de em
+-- casos de instances faltando, uma instance OfNat faltando para um tipo nao
+-- causa uma coercion de Nat para ser aplicada:
+
+def perhapsPerhapsPerhapsNat₁ : Option (Option (Option Nat)) :=
+  392
+
+-- A coercion nao eh aplicada porque o problema nao eh um type mismatch (o
+-- numeral `392` eh polimorfico e pode ter qualquer tipo), mas sim a ausencia
+-- de uma instance OfNat para `Option (Option (Option Nat))`.
+
+-- Para resolver, eh necessario indicar explicitamente o tipo:
+def perhapsPerhapsPerhapsNat₂ : Option (Option (Option Nat)) :=
+  (392 : Nat)
+
+
+-- 3.6.8. Design Considerations
+
+-- Coercions sao uma ferramenta poderosa que deve ser usada com responsabilidade.
+-- Por um lado, elas pertmitem que uma API siga naturalmente as regras do dominio
+-- sendo modelado. Isso pode ser a diferenca entre uma bagunca burocratica de funcoes
+-- de conversao manuais e um programa claro.
+
+-- "Programas devem ser escritos para pessoas lerem, e apenas incidentalmente
+-- para maquinas executarem."
+
+-- APIs que dependem muito de coercions tem algumas limitacoes. Pense cuidadosamente
+-- sobre essas limitacoes antes de usar coercions em suas proprias bibliotecas.
+
+-- 1. Coercions sao aplicadas apenas em contextos onde existe informacao de tipo
+-- suficiente para o Lean conhecer todos os tipos envolvidos, porque nao ha
+-- parametros de saida nas type classes de coercion.
+
+-- Isso significa que uma anotacao de tipo de retorno em uma funcao pode ser a
+-- diferenca entre um erro de tipo e uma coercion aplicada com sucesso.
+
+-- Por exemplo, a coercion de listas nao-vazias para listas faz o seguinte
+-- programa funcionar:
+
+def lastSpider : Option String :=
+  List.getLast? idahoSpiders
+
+-- Por outro lado, se a anotacao de tipo for omitida, entao o tipo de resultado
+-- eh desconhecido, entao o Lean nao consegue encontrar a coercion:
+
+def lastSpider₁ :=
+  List.getLast? idahoSpiders
+
+-- 2. Quando uma coercion nao eh aplicada por alguma razao, o usuario
+-- recebe o erro de tipo original, o que pode tornar dificil debugar
+-- cadeias de coercions.
+
+-- 3. Finalmente, coercions nao sao aplicadas no contexto de `dot notation`.
+-- Isso significa que ainda existe uma diferenca importante entre expressoes que
+-- precisam ser coercidas e aquelas que nao precisam, e essa diferenca eh
+-- visivel para usuarios da sua API.
+-- _`x.foo` nao trigga coercions_
+
+
+-- 3.7. Additional Conveniences
+
+
+-- 3.7.1. Constructor Syntax for Instances
+
+-- Nos bastidores, type classes sao tipos structure e instances sao valores
+-- desses tipos. As unicas diferencas sao que o Lean armazena informacao adicional
+-- sobre type classes, como quais parametros sao parametros de saida, e que
+-- instances sao registradas para busca.
+
+-- Enquanto valores que tem tipos structure tipicamente sao definidos/criados
+-- usando os `⟨...⟩` ou com `{ }` e campos, e instances tipicamente sao definidas
+-- usando `where`, ambas as sintaxes funcionam para ambos os tipos de definicao.
+
+-- Por exemplo, uma aplicacao de silvicultura pode representar arvores da
+-- seguinte forma:
+
+structure Tree : Type where
+  latinName : String
+  commonNames : List String
+
+def oak : Tree :=
+  ⟨"Quercus robur", ["common oak", "European oak"]⟩
+
+def birch : Tree :=
+  { latinName := "Betula pendula",
+    commonNames := ["silver birch", "warty birch"]
+  }
+
+def sloe : Tree where
+  latinName := "Prunus spinosa"
+  commonNames := ["sloe", "blackthorn"]
+
+-- Todas as tres sintaxes sao equivalentes.
+
+-- Similarmente, instances de type class podem ser definidas usando todas as
+-- tres sintaxes:
+
+class Display (α : Type) where
+  displayName : α → String
+
+instance : Display Tree :=
+  ⟨Tree.latinName⟩
+
+instance : Display Tree :=
+  { displayName := Tree.latinName }
+
+instance : Display Tree where
+  displayName t := t.latinName
+
+-- A sintaxe `where` eh tipicamente usada para instances, enquanto structures
+-- usam ou a sintaxe com chaves ou a sintaxe `where`.
+
+-- A sintaxe `⟨...⟩` pode ser util quando se enfatiza que um tipo structure eh
+-- muito parecido com uma tupla na qual os campos acontecem de ter nomes, mas
+-- os nomes nao sao importantes no momento.
+
+-- Porem, ha situacoes onde pode fazer sentido usar outras alternativas. Em
+-- particular, uma biblioteca pode fornecer uma funcao que constroi um valor
+-- de instance. Colocar uma chamada para essa funcao depois de `:=` em uma
+-- declaracao de instance eh a maneira mais facil de usar tal funcao:
+
+-- Exemplo de funcao para instance:
+
+def makeDisplayFromToString [ToString α] : Display α :=
+  { displayName := toString }
+
+-- Usando a funcao diretamente:
+instance : Display Nat := makeDisplayFromToString
+
+-- Ao inves de escrever manualmente
+instance : Display Nat where
+  displayName := toString
+
+
+-- 3.7.2. Examples
+
+-- Ao experimentar com codigo Lean, definicoes podem ser mais convenientes de
+-- usar do que comandos #eval ou #check.
+
+-- 1. Definicoes nao produzem output, o que pode ajudar a manter o foco do
+-- leitor no output mais interessante.
+
+-- 2. Eh mais facil escrever a maioria dos programas Lean comecando com uma
+-- assinatura de tipo, permitindo que o Lean forneca mais assistencia e
+-- melhores mensagens de erro enquanto escreve o programa em si.
+-- Por outro lado, #eval e #check sao mais faceis de usar em contextos
+-- onde o Lean consegue determinar o tipo da expressao fornecida.
+
+-- 3. #eval nao pode ser usado com expressoes cujos tipos nao tem instances
+-- ToString ou Repr, como funcoes.
+
+-- 4. Blocos `do` multi-step, let-expressions, e outras formas sintaticas que
+-- ocupam multiplas linhas sao particularmente dificeis de escrever com
+-- uma anotacao de tipo em #eval ou #check, simplesmente porque a
+-- parentetizacao necessaria pode ser dificil de prever.
+
+-- Para contornar esses problemas, Lean suporta a indicacao explicita de
+-- _examples_ em um arquivo fonte. Um example eh como uma definicao sem nome.`
+
+example : NonEmptyList String :=
+  { head := "Sparrow",
+    tail := ["Duck", "Swan", "Magpie", "Eurasian coot", "Crow"]
+  }
+
+-- Examples podem definir funcoes aceitando argumentos:
+
+example (n : Nat) (k : Nat) : Bool :=
+  n + k == k + n
+
+-- Embora isso crie uma funcao nos bastidores, essa funcao nao tem nome e
+-- nao pode ser chamada. Ainda assim, isso eh util para demonstrar como uma
+-- biblioteca pode ser usada com valores arbitrarios ou desconhecidos de
+-- algum tipo dado.
+
+-- Em source files, declaracoes example sao melhor acompanhadas de comentarios
+-- que explicam como o example ilustra os conceitos da biblioteca.
+
+
+-- 3.8. Summary
+
+
+-- 3.8.1. Type Classes and Overloading
