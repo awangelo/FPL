@@ -2108,3 +2108,207 @@ example (n : Nat) (k : Nat) : Bool :=
 
 
 -- 3.8.1. Type Classes and Overloading
+
+-- Type classes sao o mecanismo do Lean para fazer overload de funcoes e operadores.
+-- Uma funcao polimorfica pode ser usada com multiplos tipos e se comporta da mesma
+-- maneira independente de qual tipo eh usado.
+
+-- Uma operacao que eh overloaded com type classes, por outro lado, tambem pode
+-- ser usada com multiplos tipos. Porem, cada tipo requer sua propria implementacao
+-- da operacao overloaded. Ou seja, o comportamento pode variar baseado em qual
+-- tipo eh fornecido.
+
+-- Uma type class tem um nome, parametros e um corpo:
+-- - Nome: uma maneira de se referir as operacoes overloaded
+-- - Parametros: determinam quais aspectos das definicoes podem ser overloaded
+-- - Corpo: fornece os nomes e assinaturas de tipo das operacoes overloadable
+
+-- Cada operacao overloadable eh chamada de _metodo_ da type class.
+
+-- Type classes podem fornecer implementacoes default de alguns metodos em termos
+-- de outros.
+
+-- Uma _instance_ de uma type class fornece implementacoes dos metodos para
+-- parametros dados. Instances podem ser polimorficas, caso em que podem funcionar
+-- para uma variedade de parametros, e podem opcionalmente fornecer implementacoes
+-- mais especificas de metodos default em casos onde uma versao mais eficiente
+-- existe para algum tipo particular.
+
+-- Parametros de type class sao ou:
+-- - Input parameters - default.
+-- - Output parameters - anotados por `outParam`.
+
+-- Lean nao comecara a buscar por uma instance ate que todos os parametros de
+-- entrada nao sejam mais metavariables, enquanto parametros de saida podem ser
+-- resolvidos durante a busca por instances.
+
+-- Parametros para uma type class nao precisam ser tipos - eles tambem podem ser
+-- valores comuns. A type class OfNat, usada para fazer overload de literais de
+-- numeros naturais, recebe o Nat overloaded como um parametro, o que permite
+-- que instances restrinjam os numeros permitidos.
+
+-- Instances podem ser marcadas com um atributo `@[default_instance]`. Quando
+-- uma instance eh uma default instance, entao ela sera escolhida como fallback
+-- para quando o Lean de outra forma falharia em encontrar uma instance devido a
+-- presenca de metavariables.
+
+
+-- 3.8.2. Type Classes for Common Syntax
+
+-- A maioria dos operadores infix no Lean sao overridden com uma type class.
+-- Por exemplo, o operador de adicao (`+`) corresponde a type class chamada `Add`.
+
+-- A maioria desses operadores tem uma versao heterogenea correspondente, na qual
+-- os dois argumentos nao precisam ter o mesmo tipo.
+
+#check Add.add
+#check HAdd.hAdd
+
+-- A sintaxe de indexacao eh overloaded usando uma type class chamada `GetElem`,
+-- que envolve provas. GetElem tem dois parametros de saida:
+-- 1. O tipo dos elementos a serem extraidos da colecao
+-- 2. Uma funcao que pode ser usada para determinar o que conta como evidencia
+--    de que o valor do indice esta dentro dos limites (in bounds) da colecao
+
+#check GetElem
+
+-- Essa evidencia eh descrita por uma proposicao, e o Lean tenta provar essa
+-- proposicao quando indexacao de array eh usada.
+
+-- Quando o Lean nao consegue checar que operacoes de acesso a lista ou array
+-- estao in bounds em compile time, a checagem pode ser adiada para run time
+-- adicionando um `?` a sintaxe de indexacao.
+
+example : List Nat := [1, 2, 3, 4]
+
+-- Compile time check (Lean prova que o indice esta in bounds):
+#eval [1, 2, 3, 4][2]
+
+-- Run time check (retorna Option, checagem adiada):
+#eval [1, 2, 3, 4][2]?
+#eval [1, 2, 3, 4][10]?
+
+
+-- 3.8.3. Functors
+
+-- Um functor eh um tipo polimorfico que suporta uma operacao de mapeamento.
+-- Essa operacao de mapeamento transforma todos os elementos sem alterar a estrutura.
+-- Por exemplo, listas sao functors e a operacao de mapeamento nao pode dropar,
+-- duplicar, nem misturar entradas na lista.
+
+-- Enquanto functors sao definidos por ter `map` (`<$>`), a type class Functor no Lean
+-- contem um metodo default adicional que eh responsavel por mapear a funcao
+-- constante sobre um valor, substituindo todos os valores cujo tipo eh dado
+-- por uma variavel de tipo polimorfica com o mesmo novo valor.
+
+#check Functor
+
+#eval Functor.mapConst 42 [1, 2, 3, 4]
+#eval Functor.mapConst "x" (some "hello")
+
+
+-- 3.8.4. Deriving Instances
+
+-- Muitas type classes tem implementacoes muito padrao. Por exemplo, a classe de
+-- igualdade booleana BEq geralmente eh implementada primeiro checando se ambos
+-- os argumentos sao construidos com o mesmo construtor, e entao checando se
+-- todos os seus argumentos sao iguais. Instances para essas classes podem ser
+-- criadas automaticamente.
+
+-- Ao definir um tipo indutivo ou uma structure, uma clausula `deriving` no final
+-- da declaracao fara com que instances sejam criadas automaticamente.
+
+inductive Cor where
+  | red
+  | green
+  | blue
+  deriving Repr, BEq, Hashable
+
+#eval Cor.red
+#eval Cor.red == Cor.blue
+#eval hash Cor.green
+
+-- Adicionalmente, o comando `deriving instance ... for ...` pode ser usado fora
+-- da definicao de um datatype para fazer com que uma instance seja gerada.
+
+deriving instance BEq, Hashable for Pos
+deriving instance BEq, Hashable for NonEmptyList
+
+-- Como cada classe para a qual instances podem ser derivadas requer tratamento
+-- especial, nem todas as classes sao derivaveis.
+
+
+-- 3.8.5. Coercions
+
+-- Coercions permitem ao Lean se "recuperar" do que normalmente seria um erro de
+-- tipo incorreto inserindo uma chamada para uma funcao que transforma dados de
+-- um tipo para outro.
+
+-- Por exemplo, a coercion de qualquer tipo α para o tipo Option α permite que
+-- valores sejam escritos diretamente, ao inves de com o construtor some, fazendo
+-- Option funcionar mais como tipos nullable de linguagens orientadas a objetos.
+
+-- Ha multiplos tipos de coercion. Eles podem se recuperar de diferentes tipos
+-- de erros, e sao representados por suas proprias type classes:
+
+-- 1. COE: Quando Lean tem uma expressao de tipo α em um contexto que espera algo
+-- com tipo β, Lean primeiro tenta encadear uma cadeia de coercions que podem
+-- transformar αs em βs, e apenas exibe o erro quando isso nao pode ser feito.
+
+#check Coe
+
+-- Permite transformar `Pos` em `Nat`:
+instance : Coe Pos Nat where
+  coe x := x.toNat
+
+
+-- 2. COEDEP: Coercion dependente do valor:
+-- A classe CoeDep recebe o valor especifico do tipo sendo coercido como um
+--  parametro extra, permitindo que:
+-- - Busca de type class adicional seja feita no valor, ou
+-- - Construtores sejam usados na instance para limitar o escopo da conversao
+
+#check CoeDep
+
+-- Coercao de List para uma NonEmptyList soh faz sentido se a List tiver elementos
+-- `(x :: xs)` e nao para a lista vazia (`[]`):
+instance : CoeDep (List α) (x :: xs) (NonEmptyList α) where
+  coe := { head := x, tail := xs }
+
+def validCoercion' : NonEmptyList Nat := [1, 2, 3]
+def invalidCoercion' : NonEmptyList Nat := []
+
+-- 3. COESORT: Coercion para sorts (Type ou Prop)
+-- Usado quando algo diferente de um sort eh fornecido em um contexto onde um
+-- sort seria esperado.
+
+#check CoeSort
+
+instance : CoeSort Monoid Type where
+  coe m := m.Carrier
+
+-- Permite usar M ao inves de M.Carrier:
+def foldMap'' (M : Monoid) (f : α → M) (xs : List α) : M :=
+  let rec go (soFar : M) : List α → M
+    | [] => soFar
+    | y :: ys => go (M.op soFar (f y)) ys
+  go M.neutral xs
+
+-- 4. COEFUN: Coercion para funcoes
+-- A classe CoeFun intercepta o que seria um erro "not a function" ao compilar
+-- uma aplicacao de funcao, e permite que o valor na posicao de funcao seja
+-- transformado em uma funcao real se possivel.
+
+#check CoeFun
+
+instance : CoeFun Adder (fun _ => Nat → Nat) where
+  coe a := (· + a.howMuch)
+
+#eval add5 3
+
+-- Exemplo com tipo dependente do valor:
+instance : CoeFun Serializer (fun s => s.Contents → JSON) where
+  coe s := s.serialize
+
+-- O serializador pode ser aplicado diretamente:
+def response := buildResponse "Title" Str "content"
