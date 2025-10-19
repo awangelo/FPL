@@ -2,6 +2,12 @@
 
 Anotações e exercícios do livro **"[Functional Programming in Lean](https://lean-lang.org/functional_programming_in_lean/)"**.
 
+**Arquivos completos:**
+- [`FPL/Chap1.lean`](FPL/Chap1.lean) - Getting to Know Lean
+- [`FPL/Chap2.lean`](FPL/Chap2.lean) - Hello, World!
+- [`FPL/Interlude.lean`](FPL/Interlude.lean) - Propositions, Proofs, and Indexing
+- [`FPL/Chap3.lean`](FPL/Chap3.lean) - Overloading and Type Classes
+
 
 ## 1. Getting to Know Lean
 
@@ -290,3 +296,229 @@ def third (xs : List α) (ok : xs.length > 2) : α := xs[2]
 
 
 ## 3. Overloading and Type Classes
+
+Type classes permitem overloading de operadores, funções e literais de maneira que funciona bem com polimorfismo. Uma type class descreve operações overloadable, e uma **instance** fornece implementações para um tipo específico.
+
+**Definindo type classes:**
+```haskell
+class Plus (α : Type) where
+  plus : α → α → α
+
+-- Instance para Nat
+instance : Plus Nat where
+  plus := Nat.add
+
+-- Instance para tipo customizado
+instance : Plus Pos where
+  plus := Pos.plus
+```
+
+**Type classes built-in:**
+```haskell
+-- Aritmética
+HAdd.hAdd  -- x + y (heterogêneo)
+Add.add    -- x + y (homogêneo)
+HSub.hSub  -- x - y
+HMul.hMul  -- x * y
+HDiv.hDiv  -- x / y
+HMod.hMod  -- x % y
+HPow.hPow  -- x ^ y
+Neg.neg    -- -x
+
+-- Bitwise (UInt8, Int8, UInt16, Int16, UInt32, Int32, UInt64, Int64, USize)
+HAnd.hAnd    -- x &&& y
+HOr.hOr      -- x ||| y
+HXor.hXor    -- x ^^^ y
+Complement.complement  -- ~~~x
+HShiftRight.hShiftRight  -- x >>> y
+HShiftLeft.hShiftLeft    -- x <<< y
+
+-- Comparação
+BEq.beq    -- x == y (boolean equality)
+LT.lt      -- x < y
+LE.le      -- x ≤ y
+Ord.compare  -- retorna Ordering (lt/eq/gt)
+
+-- Outros
+ToString.toString
+Hashable.hash
+Inhabited.default
+Append.append  -- x ++ y
+Functor.map    -- f <$> xs
+```
+
+**Literais numéricos:**
+```haskell
+class Zero (α : Type) where
+  zero : α
+
+class One (α : Type) where  
+  one : α
+
+class OfNat (α : Type) (n : Nat) where
+  ofNat : α
+
+-- Instance para valores específicos
+instance : OfNat LT4 0 where
+  ofNat := LT4.zero
+
+instance : OfNat LT4 3 where
+  ofNat := LT4.three
+
+-- Instance para intervalos (pattern matching)
+instance : OfNat Pos (n + 1) where
+  ofNat := 
+    let rec natPlusOne : Nat → Pos
+      | 0 => Pos.one
+      | k + 1 => Pos.succ (natPlusOne k)
+    natPlusOne n
+
+#eval (3 : Pos)  -- válido
+#eval (0 : Pos)  -- erro
+```
+
+**Polimorfismo com type classes:**
+
+```haskell
+-- Constraints entre colchetes []
+def List.sum [Add α] [OfNat α 0] : List α → α
+  | [] => 0
+  | x :: xs => x + xs.sum
+
+-- Busca recursiva de instances
+instance [Add α] : Add (PPoint α) where
+  add p1 p2 := { x := p1.x + p2.x, y := p1.y + p2.y }
+
+-- Lean encontra automaticamente: Add (PPoint Nat) → Add Nat
+```
+
+**Controlando busca de instances:**
+```haskell
+-- Output parameters: iniciam busca mesmo com tipo desconhecido
+class HPlus (α : Type) (β : Type) (γ : outParam Type) where
+  hPlus : α → β → γ
+
+-- Default instances: usadas quando inputs não são totalmente conhecidos
+@[default_instance]
+instance [Add α] : HAdd α α α where
+  hAdd := Add.add
+
+-- Prioridades em default instances
+@[default_instance 100]  -- maior prioridade
+instance : Display Nat := ...
+```
+
+**Indexação segura:**
+```haskell
+class GetElem 
+    (coll : Type)           -- tipo da coleção
+    (idx : Type)            -- tipo do índice  
+    (item : outParam Type)  -- tipo dos elementos
+    (inBounds : outParam (coll → idx → Prop)) where  -- evidência
+  getElem : (c : coll) → (i : idx) → inBounds c i → item
+
+-- Instance para NonEmptyList
+abbrev NonEmptyList.inBounds (xs : NonEmptyList α) (i : Nat) : Prop :=
+  i ≤ xs.tail.length
+
+instance : GetElem (NonEmptyList α) Nat α NonEmptyList.inBounds where
+  getElem := NonEmptyList.get
+
+#eval idahoSpiders[0]   -- ok
+#eval idahoSpiders[9]   -- erro: precisa prova
+```
+
+**Igualdade:**
+
+1. **Boolean Equality (==)**: função que retorna Bool
+    - BEq type class
+    - Não funciona com funções
+2. **Propositional Equality (=)**: afirmação matemática (tipo Prop)
+    - Pode afirmar igualdade de qualquer expressão
+    - Algumas são decidíveis (podem ser checadas automaticamente)
+
+```haskell
+#eval "hello" == "world"  -- Bool
+#check (fun x => x + 1) = Nat.succ  -- Prop (válido)
+#eval if 2 < 4 then "yes" else "no"  -- proposição decidível
+```
+
+**Functors:** 
+```haskell
+class Functor (f : Type → Type) where
+  map : {α β : Type} → (α → β) → f α → f β
+  mapConst {α β : Type} (x : α) (coll : f β) : f α :=
+    map (fun _ => x) coll
+
+-- Operador infix
+#eval (· + 5) <$> [1, 2, 3]  -- [6, 7, 8]
+
+-- Laws:
+-- 1. id <$> x = x
+-- 2. (h ∘ g) <$> v = h <$> (g <$> v)
+```
+
+**Derivando instances:**
+```haskell
+-- Durante definição do tipo
+inductive Color where
+  | red | green | blue
+  deriving Repr, BEq, Hashable, Ord
+
+-- Depois da definição
+deriving instance BEq, Hashable for Pos
+
+-- Classes deriváveis: Inhabited, BEq, Repr, Hashable, Ord
+```
+
+**Coercions:**
+```haskell
+-- 1. Coe: coerção entre tipos
+class Coe (α : Type) (β : Type) where
+  coe : α → β
+
+instance : Coe Pos Nat where
+  coe x := x.toNat
+
+-- Coerções podem ser encadeadas: Pos → Nat → Int
+
+-- 2. CoeDep: coerção dependente do valor
+instance : CoeDep (List α) (x :: xs) (NonEmptyList α) where
+  coe := { head := x, tail := xs }
+
+-- 3. CoeSort: coerção para sorts (Type ou Prop)
+instance : CoeSort Monoid Type where
+  coe m := m.Carrier
+
+-- 4. CoeFun: coerção para funções
+instance : CoeFun Adder (fun _ => Nat → Nat) where
+  coe a := (· + a.howMuch)
+
+-- Coerção manual com ↑
+def x : Option Nat := ↑(5 : Nat)
+```
+
+**Tabela de type classes comuns:**
+| Classe | Operador | Descrição |
+|--------|----------|-----------|
+| `Add α` | `+` | Adição homogênea |
+| `HAdd α β γ` | `+` | Adição heterogênea |
+| `BEq α` | `==` | Igualdade booleana |
+| `Ord α` | `compare` | Ordenação (lt/eq/gt) |
+| `Hashable α` | `hash` | Função hash |
+| `ToString α` | `toString` | Conversão para string |
+| `Append α` | `++` | Concatenação |
+| `Functor f` | `<$>` | Map sobre estrutura |
+| `GetElem coll idx` | `xs[i]` | Indexação |
+
+**Convenções:**
+- Use `@` antes do nome para ver type signature completa: `@IO.println`
+- Type classes usam busca de instances, não unificação
+- Instance implicits: colchetes `[]` para constraints
+- Coercions não funcionam com dot notation (`x.foo`)
+- `abbrev` para proposições (tactics enxergam definição)
+- `def` para definições (tactics não enxergam)
+- Definições de método default: `:=` na definição da classe
+- `deriving` pode ser usado durante ou após definição do tipo
+- Output parameters permitem busca com metavariables
+- Default instances usadas como fallback quando busca normal falha
