@@ -318,11 +318,7 @@ instance : Plus Pos where
 -- Aritmética
 HAdd.hAdd  -- x + y (heterogêneo)
 Add.add    -- x + y (homogêneo)
-HSub.hSub  -- x - y
-HMul.hMul  -- x * y
-HDiv.hDiv  -- x / y
-HMod.hMod  -- x % y
-HPow.hPow  -- x ^ y
+HSub.hSub, HMul.hMul, HDiv.hDiv, HMod.hMod, HPow.hPow
 Neg.neg    -- -x
 
 -- Bitwise (UInt8, Int8, UInt16, Int16, UInt32, Int32, UInt64, Int64, USize)
@@ -330,8 +326,7 @@ HAnd.hAnd    -- x &&& y
 HOr.hOr      -- x ||| y
 HXor.hXor    -- x ^^^ y
 Complement.complement  -- ~~~x
-HShiftRight.hShiftRight  -- x >>> y
-HShiftLeft.hShiftLeft    -- x <<< y
+HShiftRight.hShiftRight, HShiftLeft.hShiftLeft
 
 -- Comparação
 BEq.beq    -- x == y (boolean equality)
@@ -349,21 +344,12 @@ Functor.map    -- f <$> xs
 
 **Literais numéricos:**
 ```haskell
-class Zero (α : Type) where
-  zero : α
-
-class One (α : Type) where  
-  one : α
-
 class OfNat (α : Type) (n : Nat) where
   ofNat : α
 
 -- Instance para valores específicos
 instance : OfNat LT4 0 where
   ofNat := LT4.zero
-
-instance : OfNat LT4 3 where
-  ofNat := LT4.three
 
 -- Instance para intervalos (pattern matching)
 instance : OfNat Pos (n + 1) where
@@ -378,7 +364,6 @@ instance : OfNat Pos (n + 1) where
 ```
 
 **Polimorfismo com type classes:**
-
 ```haskell
 -- Constraints entre colchetes []
 def List.sum [Add α] [OfNat α 0] : List α → α
@@ -388,8 +373,6 @@ def List.sum [Add α] [OfNat α 0] : List α → α
 -- Busca recursiva de instances
 instance [Add α] : Add (PPoint α) where
   add p1 p2 := { x := p1.x + p2.x, y := p1.y + p2.y }
-
--- Lean encontra automaticamente: Add (PPoint Nat) → Add Nat
 ```
 
 **Controlando busca de instances:**
@@ -443,7 +426,10 @@ instance : GetElem (NonEmptyList α) Nat α NonEmptyList.inBounds where
 #eval if 2 < 4 then "yes" else "no"  -- proposição decidível
 ```
 
-**Functors:** 
+**Functors:**
+
+Um tipo polimórfico é um functor se tem um overload para `map`, que transforma cada elemento contido nele usando uma função, preservando a estrutura.
+
 ```haskell
 class Functor (f : Type → Type) where
   map : {α β : Type} → (α → β) → f α → f β
@@ -453,9 +439,29 @@ class Functor (f : Type → Type) where
 -- Operador infix
 #eval (· + 5) <$> [1, 2, 3]  -- [6, 7, 8]
 
--- Laws:
--- 1. id <$> x = x
--- 2. (h ∘ g) <$> v = h <$> (g <$> v)
+-- Instance para NonEmptyList
+instance : Functor NonEmptyList where
+  map f xs := { head := f xs.head, tail := f <$> xs.tail }
+
+-- Instance para PPoint
+instance : Functor PPoint where
+  map f p := { x := f p.x, y := f p.y }
+```
+
+Leis dos Functors:
+1. Identidade: `id <$> x = x`
+2. Composição: `(h ∘ g) <$> v = h <$> (g <$> v)`
+
+Observações importantes:
+- Instance definida para o construtor de tipo (`List`), não o tipo completo (`List α`)
+- Functor mapeia objetos (tipos via construtor) e morfismos (funções via map)
+- Map só desce um nível: em `NonEmptyList (PPoint Nat)`, função mapeia `PPoint Nat`, não `Nat`
+- `mapConst`: método default que substitui todos elementos por valor constante
+- Exemplos: `List`, `Option`, `NonEmptyList` são functors; `List α` não é
+
+```haskell
+#eval Functor.mapConst 42 [1, 2, 3]  -- [42, 42, 42]
+#eval toString <$> some 5            -- some "5"
 ```
 
 **Derivando instances:**
@@ -474,13 +480,8 @@ deriving instance BEq, Hashable for Pos
 **Coercions:**
 ```haskell
 -- 1. Coe: coerção entre tipos
-class Coe (α : Type) (β : Type) where
-  coe : α → β
-
 instance : Coe Pos Nat where
   coe x := x.toNat
-
--- Coerções podem ser encadeadas: Pos → Nat → Int
 
 -- 2. CoeDep: coerção dependente do valor
 instance : CoeDep (List α) (x :: xs) (NonEmptyList α) where
