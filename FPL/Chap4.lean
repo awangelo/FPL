@@ -505,3 +505,169 @@ def numberState (t : BinTree α) : BinTree (Nat × α) :=
 
 
 -- 4.2. The Monad Type Class
+
+-- Em vez de ter que importar um operador como ok ou andThen para cada tipo que
+-- eh um monad, a biblioteca padrao de Lean contem uma type class que permite
+-- que sejam sobrecarregados, de modo que os mesmos operadores possam ser usados
+-- para qualquer monad. Monads tem duas operacoes, que sao equivalentes a ok e
+-- andThen:
+
+#check Monad
+#check pure
+#check bind
+
+class MyMonad (m : Type → Type) where
+  pure : α → m α
+  bind : m α → (α → m β) → m β
+
+-- Esta definicao eh ligeiramente simplificada. A definicao real na biblioteca
+-- Lean eh um pouco mais envolvida, e sera apresentada mais tarde.
+
+-- As instancias Monad para `Option` e `Except ε` podem ser criadas adaptando as
+-- definicoes de suas respectivas operacoes andThen:
+
+instance : MyMonad Option where
+  pure x := some x
+  bind opt next :=
+    match opt with
+    | none => none
+    | some x => next x
+
+instance : MyMonad (Except ε) where
+  pure x := Except.ok x
+  bind attempt next :=
+    match attempt with
+    | Except.error e => Except.error e
+    | Except.ok x => next x
+
+-- Como exemplo, firstThirdFifthSeventh foi definido separadamente para tipos de
+-- retorno Option α e Except String α. Agora, pode ser definido polimorficamente
+-- para qualquer monad. Requer, porem, uma funcao de busca como argumento,
+-- porque diferentes monads podem falhar ao encontrar um resultado de diferentes
+-- formas. A versao infix de bind eh >>=, que tem o mesmo papel que ~~> nos exemplos.
+
+def firstThirdFifthSeventhMonad [Monad m] (lookup : List α → Nat → m α)
+    (xs : List α) : m (α × α × α × α) :=
+  lookup xs 0 >>= fun first =>
+  lookup xs 2 >>= fun third =>
+  lookup xs 4 >>= fun fifth =>
+  lookup xs 6 >>= fun seventh =>
+  pure (first, third, fifth, seventh)
+
+-- Dadas listas de exemplo de mamiferos lentos e passaros rapidos, esta
+-- implementacao de firstThirdFifthSeventh pode ser usada com Option:
+
+def slowMammals : List String :=
+  ["Three-toed sloth", "Slow loris"]
+
+def fastBirds : List String := [
+  "Peregrine falcon",
+  "Saker falcon",
+  "Golden eagle",
+  "Gray-headed albatross",
+  "Spur-winged goose",
+  "Swift",
+  "Anna's hummingbird"
+]
+
+-- `Option` eh o monad em "List String → Nat → Option String".
+#eval firstThirdFifthSeventhMonad (fun xs i => xs[i]?) slowMammals
+#eval firstThirdFifthSeventhMonad (fun xs i => xs[i]?) fastBirds
+
+-- Apos renomear a funcao de busca get de Except para algo mais especifico, a
+-- mesma implementacao de firstThirdFifthSeventh pode ser usada com Except:
+
+def getOrExcept (xs : List α) (i : Nat) : Except String α :=
+  match xs[i]? with
+  | none =>
+    Except.error s!"Index {i} not found (maximum is {xs.length - 1})"
+  | some x =>
+    Except.ok x
+
+#eval firstThirdFifthSeventhMonad getOrExcept slowMammals
+#eval firstThirdFifthSeventhMonad getOrExcept fastBirds
+-- `getOrExcept` eh passado de forma parcial para `firstThirdFifthSeventhMonad`
+-- e eh "completada" quando ocorre `lookup xs i >>= fun first =>`.
+
+-- O fato de que m deve ter uma instancia Monad significa que as operacoes `>>=`
+-- e `pure` estao disponiveis.
+
+
+-- 4.2.1. General Monad Operations
+
+-- Como muitos tipos diferentes sao monads, funcoes que sao polimorficas sobre
+-- qualquer monad sao muito poderosas. Por exemplo, a funcao mapM eh uma versao
+-- de map que usa um Monad para sequenciar e combinar os resultados de aplicar
+-- uma funcao:
+
+def mapM [Monad m] (f : α → m β) : List α → m (List β)
+  | [] => pure []
+  | x :: xs =>
+    f x >>= fun hd =>
+    mapM f xs >>= fun tl =>
+    pure (hd :: tl)
+
+-- O tipo de retorno do argumento de funcao `f` determina qual instancia Monad
+-- sera usada. Como o tipo de `f` determina os efeitos disponiveis, eles podem
+-- ser rigidamente controlados por designers de API.
+
+-- `State σ α` representa programas que fazem uso de uma variavel mutavel de tipo
+-- `σ` e retornam um valor de tipo `α`. _Esses programas sao na verdade funcoes_
+-- _de um estado inicial para um par de um valor e um estado final._ A classe
+-- Monad requer que seu parametro espere um unico argumento de tipo (Type → Type).
+-- Isso significa que a instancia para State deve mencionar o tipo de estado σ,
+-- que se torna um parametro para a instancia:
+
+#check @State
+
+instance : Monad (State σ) where
+  pure x := fun s => (s, x)
+  bind first next :=
+    fun s =>
+      let (s', x) := first s  -- `s` eh o estado inicial, `s'` eh o novo estado
+      next x s'  -- `x` eh o valor retornado, `s'` eh passado adiante
+
+-- Isso significa que o tipo do estado nao pode mudar entre chamadas para get e
+-- set que sao sequenciadas usando bind, o que eh uma regra razoavel para
+-- computacoes com estado. O operador increment aumenta um estado salvo por uma
+-- quantidade dada, retornando o valor antigo:
+
+def increment (howMuch : Int) : State Int Int :=
+  getState >>= fun i =>
+  setState (i + howMuch) >>= fun () =>
+  pure i
+
+#eval increment 1 0
+
+-- Usar mapM com increment resulta em um programa que computa a soma das entradas
+-- em uma lista. Mais especificamente, a variavel mutavel contem a soma ate o
+-- momento, enquanto a lista resultante contem uma soma acumulada. Em outras
+-- palavras, mapM increment tem tipo List Int → State Int (List Int), e
+-- expandindo a definicao de State resulta em List Int → Int → (Int × List Int).
+-- Recebe uma soma inicial como argumento, que deve ser 0:
+
+#eval mapM increment [1, 2, 3, 4, 5] 0
+
+-- Um efeito de logging pode ser representado usando WithLog. Assim como State,
+-- sua instancia Monad eh polimorfica com respeito ao tipo dos dados registrados:
+
+instance : Monad (WithLog logged) where
+  pure x := {log := [], val := x}
+  bind result next :=
+    let {log := thisOut, val := thisRes} := result
+    let {log := nextOut, val := nextRes} := next thisRes
+    {log := thisOut ++ nextOut, val := nextRes}
+
+-- saveIfEven eh uma funcao que registra numeros pares mas retorna seu argumento
+-- inalterado:
+
+def saveIfEven (i : Int) : WithLog Int Int :=
+  (if isEven i then
+    save i
+   else pure ()) >>= fun () =>
+  pure i
+
+-- Usar esta funcao com mapM resulta em um log contendo numeros pares emparelhado
+-- com uma lista de entrada inalterada:
+
+#eval mapM saveIfEven [1, 2, 3, 4, 5]
