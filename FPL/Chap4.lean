@@ -671,3 +671,130 @@ def saveIfEven (i : Int) : WithLog Int Int :=
 -- com uma lista de entrada inalterada:
 
 #eval mapM saveIfEven [1, 2, 3, 4, 5]
+
+
+-- 4.2.2. The Identity Monad
+
+-- Monads codificam programas com efeitos, como falha, exceptions ou logging, em
+-- representacoes explicitas como dados e funcoes. Porem, as vezes uma API sera
+-- escrita para usar um monad por flexibilidade, mas o cliente da API pode nao
+-- requerer nenhum efeito codificado. O identity monad eh um monad que nao tem
+-- efeitos. Ele permite que codigo puro seja usado com APIs monadicas:
+
+def Id' (t : Type) : Type := t
+
+instance : Monad Id' where
+  pure x := x
+  bind x f := f x
+
+-- O tipo de pure deveria ser `α → Id α`, mas `Id α` reduz para apenas `α`.
+-- Similarmente, o tipo de bind deveria ser `α → (α → Id β) → Id β`. Como isso
+-- reduz para `α → (α → β) → β`, o segundo argumento pode ser aplicado ao
+-- primeiro para encontrar o resultado.
+
+-- Com o identity monad, mapM se torna equivalente a map. Para chama-lo desta
+-- forma o Lean precisa uma dica de que o monad pretendido eh o `Id`:
+
+#eval mapM (m := Id') (· + 1) [1, 2, 3, 4, 5]
+
+-- Omitir a dica resulta em erro:
+#eval mapM (· + 1) [1, 2, 3, 4, 5]
+
+-- Neste erro, a aplicacao de uma metavariavel a outra indica que Lean nao
+-- executa a computacao de nivel de tipo para tras. O tipo de retorno da funcao
+-- eh esperado ser o monad aplicado a algum outro tipo. Similarmente, usar mapM
+-- com uma funcao cujo tipo nao fornece dicas especificas sobre qual monad deve
+-- ser usado resulta em "instance problem is stuck":
+
+#eval mapM (fun (x : Nat) => x) [1, 2, 3, 4, 5]
+
+
+-- 4.2.3. The Monad Contract
+
+-- Assim como todo par de instancias de BEq e Hashable deve garantir que
+-- quaisquer dois valores iguais tenham o mesmo hash, ha um contrato que cada
+-- instancia de Monad deve obedecer.
+
+-- Primeiro, pure deve ser uma identidade a esquerda de bind. Isto eh,
+-- "bind (pure v) f" deve ser o mesmo que "f v".
+
+-- Segundo, pure deve ser uma identidade a direita de bind, entao "bind v pure"
+-- eh o mesmo que "v".
+
+-- Finalmente, bind deve ser associativo, entao "bind (bind v f) g" eh o mesmo
+-- que "bind v (fun x => bind (f x) g)".
+
+-- Este contrato especifica as propriedades esperadas de programas com efeitos
+-- mais geralmente. Como pure nao tem efeitos, sequenciar seus efeitos com bind
+-- nao deveria mudar o resultado. A propriedade associativa de bind basicamente
+-- diz que a contabilidade de sequenciamento em si nao importa, desde que a
+-- ordem em que as coisas estao acontecendo seja preservada.
+
+
+-- 4.2.4. Exercises
+
+
+-- 4.2.4.1. Mapping on a Tree
+
+-- Define a function BinTree.mapM. By analogy to mapM for lists, this function
+-- should apply a monadic function to each data entry in a tree, as a preorder
+-- traversal. The type signature should be:
+
+def BinTree.mapM [Monad m] (f : α → m β) : BinTree α → m (BinTree β)
+  | leaf => pure leaf
+  | branch l x r => do
+    let x' ← f x
+    let l' ← mapM f l
+    let r' ← mapM f r
+    pure $ branch l' x' r'
+
+-- ou
+
+def BinTree.mapM' [Monad m] (f : α → m β) : BinTree α → m (BinTree β)
+  | leaf => pure leaf
+  | branch l x r =>
+    f x >>= fun x' =>
+    mapM f l >>= fun l' =>
+    mapM f r >>= fun r' =>
+    pure $ branch l' x' r'
+
+
+-- 4.2.4.2. The Option Monad Contract
+
+-- First, write a convincing argument that the Monad instance for Option
+-- satisfies the monad contract.
+
+/-
+  First, pure should be a left identity of bind. That is, bind (pure v) f should
+    be the same as f v.
+  Secondly, pure should be a right identity of bind, so bind v pure is the same
+    as v.
+  Finally, bind should be associative, so bind (bind v f) g is the same as
+    bind v (fun x => bind (f x) g).
+-/
+
+def f (v : α) : (Option α) :=
+  Option.some v
+
+#eval bind (pure 1) f
+#eval (pure 1) >>= f
+#eval (pure 1) >>= f = f 1
+
+#eval bind (Option.some 1) pure
+#eval Option.some 1
+#eval bind (Option.some 1) pure = Option.some 1
+
+-- (v >>= f) >>= g  =  v >>= (fun x => f x >>= g)
+
+
+-- Then, consider the following instance:
+
+-- instance : Monad Option where
+--   pure x := some x
+--   bind opt next := none
+-- Both methods have the correct type. Why does this instance violate the monad
+-- contract?
+
+-- `bind` deveria sequenciar computacoes do tipo `Option`, mas essa instance
+-- apenas ignora a computacao anterior e a funcao, apenas retornando um valor
+-- constante (`none`).
