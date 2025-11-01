@@ -786,7 +786,6 @@ def f (v : α) : (Option α) :=
 
 -- (v >>= f) >>= g  =  v >>= (fun x => f x >>= g)
 
-
 -- Then, consider the following instance:
 
 -- instance : Monad Option where
@@ -798,3 +797,265 @@ def f (v : α) : (Option α) :=
 -- `bind` deveria sequenciar computacoes do tipo `Option`, mas essa instance
 -- apenas ignora a computacao anterior e a funcao, apenas retornando um valor
 -- constante (`none`).
+
+
+-- 4.3. Example: Arithmetic in Monads
+
+-- Monads sao uma forma de codificar programas com efeitos colaterais em uma
+-- linguagem que nao os possui nativamente. Embora usar a API Monad traga um
+-- custo sintatico, ela oferece dois beneficios importantes:
+-- 1. Os programas deixam explicito nos tipos quais efeitos usam, facilitando
+--    entender o que cada funcao pode fazer apenas olhando sua assinatura.
+-- 2. Nem toda linguagem oferece os mesmos efeitos (como exceptions,
+--    continuations, etc). Com monads, o programador pode escolher quais efeitos
+--    usar, sem ficar limitado ao que a linguagem oferece nativamente.
+
+-- Um exemplo de programa que pode ser escrito de forma generica para varios
+-- monads eh um avaliador de expressoes aritmeticas.
+
+
+-- 4.3.1. Arithmetic Expressions
+
+-- Uma expressao aritmetica pode ser um inteiro literal ou um operador binario
+-- aplicado a duas expressoes. Os operadores sao soma, subtracao, multiplicacao
+-- e divisao:
+
+inductive Expr (op : Type) where
+  | const : Int → Expr op
+  | prim : op → Expr op → Expr op → Expr op
+
+inductive Arith where
+  | plus
+  | minus
+  | times
+  | div
+
+-- O termo 2 + 3 eh representado assim:
+open Expr in
+open Arith in
+def twoPlusThree : Expr Arith :=
+  prim plus (const 2) (const 3)
+
+-- E a expressao 14 / (45 - 5 * 9):
+open Expr in
+open Arith in
+def fourteenDivided : Expr Arith :=
+  prim div (const 14)
+    (prim minus (const 45)
+      (prim times (const 5)
+        (const 9)))
+
+
+-- 4.3.2. Evaluating Expressions
+
+-- Essas expressoes incluem divisao e divisao por zero nao eh definida. Uma
+-- maneira de representar essa falha eh usar `Option`.
+
+def evaluateOption : Expr Arith → Option Int
+  | Expr.const i => pure i
+  | Expr.prim p e1 e2 =>
+    evaluateOption e1 >>= fun v1 =>
+    evaluateOption e2 >>= fun v2 =>
+    match p with
+    | Arith.plus => pure (v1 + v2)
+    | Arith.minus => pure (v1 - v2)
+    | Arith.times => pure (v1 * v2)
+    | Arith.div => if v2 == 0 then none else pure (v1 / v2)
+
+-- Esta definicao usa o `bind` da instancia `Monad Option` para propagar falhas.
+-- Porem, a funcao mistura duas preocupacoes: avaliar subexpressoes (e1, e2) e
+-- aplicar um operador binario (p) aos resultados.
+-- Pode ser melhorada dividindo em duas funcoes:
+
+def applyPrimOption : Arith → Int → Int → Option Int
+  | Arith.plus, x, y => pure (x + y)
+  | Arith.minus, x, y => pure (x - y)
+  | Arith.times, x, y => pure (x * y)
+  | Arith.div, x, y => if y == 0 then none else pure (x / y)
+
+def evaluateOption' : Expr Arith → Option Int
+  | Expr.const i => pure i
+  | Expr.prim p e1 e2 =>
+    evaluateOption' e1 >>= fun v1 =>
+    evaluateOption' e2 >>= fun v2 =>
+    applyPrimOption p v1 v2
+
+
+#eval evaluateOption' fourteenDivided
+
+-- Funciona como esperado, mas essa mensagem nao eh muito util. Como o codigo foi
+-- escrito usando `>>=` em vez de lidar explicitamente com o construtor `none`,
+-- uma pequena modificacao pode fornecer uma mensagem de erro na falha:
+
+def applyPrimExcept : Arith → Int → Int → Except String Int
+  | Arith.plus, x, y => pure (x + y)
+  | Arith.minus, x, y => pure (x - y)
+  | Arith.times, x, y => pure (x * y)
+  | Arith.div, x, y =>
+    if y == 0 then
+      Except.error s!"Tried to divide {x} by zero"
+    else pure (x / y)
+
+def evaluateExcept : Expr Arith → Except String Int
+  | Expr.const i => pure i
+  | Expr.prim p e1 e2 =>
+    evaluateExcept e1 >>= fun v1 =>
+    evaluateExcept e2 >>= fun v2 =>
+    applyPrimExcept p v1 v2
+
+-- A unica diferenca eh que a assinatura de tipo menciona `Except String` em vez
+-- de `Option`, e o caso de falha usa `Except.error` em vez de `none`. Um
+-- avaliador que eh polimorfico em seu monad (aceita qualquer monad) e recebe
+-- uma funcao apply como argumento, eh capaz de representar erros de varias
+-- maneiras:
+
+def evaluateM [Monad m]
+    (applyPrim : Arith → Int → Int → m Int) :
+    Expr Arith → m Int
+  | Expr.const i => pure i
+  | Expr.prim p e1 e2 =>
+    evaluateM applyPrim e1 >>= fun v1 =>
+    evaluateM applyPrim e2 >>= fun v2 =>
+    applyPrim p v1 v2
+
+-- Usando o apply de tipo Option funciona igual ao primeiro avaliador:
+#eval evaluateM applyPrimOption fourteenDivided
+
+-- E o de tipo Except funciona igual a versao com mensagens de erro:
+#eval evaluateM applyPrimExcept fourteenDivided
+
+-- O codigo ainda pode ser melhorado. As funcoes applyPrimOption e
+-- applyPrimExcept diferem apenas em seu tratamento de divisao, que pode ser
+-- extraido em outro parametro para o avaliador:
+
+def applyDivOption (x : Int) (y : Int) : Option Int :=
+    if y == 0 then
+      none
+    else pure (x / y)
+
+def applyDivExcept (x : Int) (y : Int) : Except String Int :=
+    if y == 0 then
+      Except.error s!"Tried to divide {x} by zero"
+    else pure (x / y)
+
+def applyPrim [Monad m]
+    (applyDiv : Int → Int → m Int) :
+    Arith → Int → Int → m Int
+  | Arith.plus, x, y => pure (x + y)
+  | Arith.minus, x, y => pure (x - y)
+  | Arith.times, x, y => pure (x * y)
+  | Arith.div, x, y => applyDiv x y
+
+def evaluateM' [Monad m]
+    (applyDiv : Int → Int → m Int) :
+    Expr Arith → m Int
+  | Expr.const i => pure i
+  | Expr.prim p e1 e2 =>
+    evaluateM' applyDiv e1 >>= fun v1 =>
+    evaluateM' applyDiv e2 >>= fun v2 =>
+    applyPrim applyDiv p v1 v2
+
+-- Neste codigo refatorado, o fato de que os dois caminhos de codigo diferem
+-- apenas em seu tratamento de falha foi tornado completamente aparente.
+
+
+-- 4.3.3. Further Effects
+
+-- Falha e exceptions nao sao os unicos tipos de efeitos que podem ser
+-- interessantes ao trabalhar com um avaliador. Enquanto divisao tem apenas o
+-- efeito colateral de falha, adicionar outros operadores primitivos as
+-- expressoes torna possivel expressar outros efeitos.
+
+-- O primeiro passo eh uma refatoracao adicional, extraindo divisao do datatype
+-- de primitivos:
+
+inductive Prim (special : Type) where
+  | plus
+  | minus
+  | times
+  | other : special → Prim special
+
+inductive CanFail where
+  | div
+
+-- CanFail eh um tipo separado para operacoes que podem falhar e que serao
+-- passadas para Prim como argumento.
+
+-- O segundo passo eh ampliar o escopo do argumento manipulador de divisao em
+-- evaluateM para que possa processar qualquer operador especial:
+
+def divOption : CanFail → Int → Int → Option Int
+  | CanFail.div, x, y => if y == 0 then none else pure (x / y)
+
+def divExcept : CanFail → Int → Int → Except String Int
+  | CanFail.div, x, y =>
+    if y == 0 then
+      Except.error s!"Tried to divide {x} by zero"
+    else pure (x / y)
+
+def applyPrim' [Monad m]
+    (applySpecial : special → Int → Int → m Int) :
+    Prim special → Int → Int → m Int
+  | Prim.plus, x, y => pure (x + y)
+  | Prim.minus, x, y => pure (x - y)
+  | Prim.times, x, y => pure (x * y)
+  | Prim.other op, x, y => applySpecial op x y
+
+def evaluateM'' [Monad m]
+    (applySpecial : special → Int → Int → m Int) :
+    Expr (Prim special) → m Int
+  | Expr.const i => pure i
+  | Expr.prim p e1 e2 =>
+    evaluateM'' applySpecial e1 >>= fun v1 =>
+    evaluateM'' applySpecial e2 >>= fun v2 =>
+    applyPrim' applySpecial p v1 v2
+
+-- Exemplo 1: Usando com Option (falha silenciosa)
+open Expr Prim in
+def exampleExpr1 : Expr (Prim CanFail) :=
+  prim (other CanFail.div) (const 10) (const 2)
+
+open Expr Prim in
+def exampleExpr2 : Expr (Prim CanFail) :=
+  prim (other CanFail.div) (const 10) (const 0)
+
+-- Usando com Option:
+#eval evaluateM'' divOption exampleExpr1
+#eval evaluateM'' divOption exampleExpr2
+
+-- Usando com Except:
+#eval evaluateM'' divExcept exampleExpr1
+#eval evaluateM'' divExcept exampleExpr2
+
+
+-- 4.3.3.1. No Effects
+
+-- O tipo Empty nao tem construtores, e portanto nenhum valor, mas Empty ainda
+-- eh util como uma indicacao ao sistema de tipos de que uma funcao nao pode ser
+-- chamada. Usar a sintaxe `nomatch E` quando E eh uma expressao cujo tipo nao
+-- tem construtores indica ao Lean que a expressao atual nao precisa retornar
+-- um resultado, porque nunca poderia ter sido chamada.
+
+-- Usar Empty como parametro para Prim indica que nao ha casos adicionais alem
+-- de Prim.plus, Prim.minus e Prim.times, porque eh impossivel criar um valor de
+-- tipo Empty para colocar no construtor Prim.other. Como uma funcao para
+-- aplicar um operador de tipo Empty a dois inteiros nunca pode ser chamada, ela
+-- nao precisa retornar um resultado. Assim, pode ser usada em qualquer monad:
+
+def applyEmpty [Monad m] (op : Empty) (_ : Int) (_ : Int) : m Int :=
+  nomatch op
+
+-- Isso pode ser usado junto com Id, para avaliar expressoes sem efeitos:
+
+open Expr Prim in
+#eval evaluateM'' (m := Id) applyEmpty (prim plus (const 5) (const (-14)))
+
+-- Impossivel:
+open Expr Prim in
+#eval evaluateM'' (m := Id) applyEmpty (prim (other CanFail.div) (const 5) (const (-14)))
+
+-- Lembrar que a funcao aqui ↑ ↑ ↑ ↑ eh usada apenas no caso do match com
+-- `Prim.other`.
+
+
+-- 4.3.3.2. Nondeterministic Search
