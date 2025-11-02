@@ -1059,3 +1059,420 @@ open Expr Prim in
 
 
 -- 4.3.3.2. Nondeterministic Search
+
+-- Em vez de simplesmente falhar ao encontrar divisao por zero, seria sensato
+-- fazer backtrack e tentar uma entrada diferente. Dado o monad certo, o mesmo
+-- evaluateM pode realizar uma busca nao-deterministica por um conjunto de
+-- respostas que nao resultam em falha. Isso requer, alem de divisao, algum meio
+-- de especificar uma escolha de resultados. Uma maneira de fazer isso eh
+-- adicionar uma funcao choose a linguagem de expressoes que instrui o avaliador
+-- a escolher qualquer um de seus argumentos ao buscar resultados sem falha.
+
+-- O resultado do avaliador agora eh um multiset de valores, em vez de um unico
+-- valor. As regras para avaliacao em um multiset sao:
+-- * Constantes n avaliam para conjuntos singleton {n}.
+-- * Operadores aritmeticos (exceto divisao) sao chamados em cada par do produto
+--   cartesiano dos operadores, entao X+Y avalia para {x+y | x∈X, y∈Y}.
+-- - Divisao X/Y avalia para {x/y | x∈X, y∈Y, y≠0}. Todos os valores 0 em Y
+--   sao descartados.
+-- - Uma escolha choose(x,y) avalia para {x,y}.
+
+-- Por exemplo:
+-- - 1 + choose(2,5) avalia para {3,6}
+-- - 1 + 2/0 avalia para {}
+-- - 90/(choose(-5,5)+5) avalia para {9}
+
+-- Um monad que representa esse efeito nao-deterministico deve ser capaz de
+-- representar uma situacao onde nao ha respostas, e uma situacao onde ha pelo
+-- menos uma resposta junto com quaisquer respostas restantes:
+
+inductive Many (α : Type) where
+  | none : Many α
+  | more : α → (Unit → Many α) → Many α
+
+-- Este datatype parece muito com List. A diferenca eh que onde List.cons
+-- armazena o resto da lista, more armazena uma funcao que deve computar os
+-- valores restantes sob demanda. Isso permite que um consumidor de Many use
+-- lazy evaluation para computar o resto apenas quando nescessario.
+
+-- Um unico resultado eh representado por um construtor more que nao retorna
+-- mais resultados:
+
+def Many.one (x : α) : Many α := Many.more x (fun () => Many.none)
+
+-- A uniao de dois multisets de resultados pode ser computada verificando se o
+-- primeiro multiset esta vazio. Se sim, o segundo multiset eh a uniao. Se nao,
+-- a uniao consiste do primeiro elemento do primeiro multiset seguido pela uniao
+-- do resto do primeiro multiset com o segundo multiset:
+
+def Many.union : Many α → Many α → Many α
+  | Many.none, ys => ys
+  | Many.more x xs, ys => Many.more x (fun () => union (xs ()) ys)
+
+-- Pode ser conveniente iniciar um processo de busca com uma lista de valores.
+-- Many.fromList converte uma lista em um multiset de resultados:
+
+def Many.fromList : List α → Many α
+  | [] => Many.none
+  | x :: xs => Many.more x (fun () => fromList xs)
+
+-- Similarmente, uma vez que uma busca foi especificada, pode ser conveniente
+-- extrair um numero de valores, ou todos os valores:
+
+def Many.take : Nat → Many α → List α
+  | 0, _ => []
+  | _ + 1, Many.none => []
+  | n + 1, Many.more x xs => x :: (xs ()).take n
+
+def Many.takeAll : Many α → List α
+  | Many.none => []
+  | Many.more x xs => x :: (xs ()).takeAll
+
+-- Uma instancia Monad Many requer um operador bind. Em uma busca
+-- nao-deterministica, sequenciar duas operacoes consiste em pegar todas as
+-- possibilidades do primeiro passo e executar o resto do programa em cada uma
+-- delas, pegando a uniao dos resultados. Em outras palavras, se o primeiro
+-- passo retorna tres respostas possiveis, o segundo passo precisa ser tentado
+-- para todas as tres. Como o segundo passo pode retornar qualquer numero de
+-- respostas para cada entrada, pegar sua uniao representa todo o espaco de busca.
+
+def Many.bind : Many α → (α → Many β) → Many β
+  | Many.none, _ => Many.none
+  | Many.more x xs, f => (f x).union (bind (xs ()) f)
+
+-- Many.one e Many.bind obedecem o contrato monad. Para verificar que
+-- "Many.bind (Many.one v) f" eh o mesmo que "f v", comece avaliando a expressao
+-- o maximo possivel:
+-- ⟹ Many.bind (Many.one v) f
+-- ⟹ Many.bind (Many.more v (fun () => Many.none)) f
+-- ⟹ (f v).union (Many.bind Many.none f)
+-- ⟹ (f v).union Many.none
+-- O multiset vazio eh uma identidade a direita de union, entao a resposta eh
+-- equivalente a "f v".
+
+-- Para verificar que "Many.bind v Many.one" eh o mesmo que "v", considere que
+-- Many.bind pega a uniao de aplicar Many.one a cada elemento de v. Em outras
+-- palavras, se v tem a forma {v1, v2, v3, ..., vn}, entao "Many.bind v Many.one"
+-- eh {v1} ∪ {v2} ∪ {v3} ∪ ... ∪ {vn}, que eh {v1, v2, v3, ..., vn} (igual).
+
+-- Finalmente, para verificar que Many.bind eh associativo, verifique que
+-- "Many.bind (Many.bind v f) g" eh o mesmo que "Many.bind v (fun x => Many.bind (f x) g)".
+-- Se v tem a forma {v1, v2, v3, ..., vn}, entao:
+-- Many.bind v f = f v1 ∪ f v2 ∪ f v3 ∪ ... ∪ f vn
+-- o que significa que:
+-- Many.bind (Many.bind v f) g =
+--   Many.bind (f v1) g ∪ Many.bind (f v2) g ∪ Many.bind (f v3) g ∪ ... ∪ Many.bind (f vn) g
+-- Similarmente:
+-- Many.bind v (fun x => Many.bind (f x) g) =
+--   (fun x => Many.bind (f x) g) v1 ∪ (fun x => Many.bind (f x) g) v2 ∪ ... ∪ (fun x => Many.bind (f x) g) vn =
+--   Many.bind (f v1) g ∪ Many.bind (f v2) g ∪ Many.bind (f v3) g ∪ ... ∪ Many.bind (f vn) g
+-- Assim, ambos os lados sao iguais, entao Many.bind eh associativo.
+
+-- A instancia monad resultante eh:
+
+instance : Monad Many where
+  pure := Many.one
+  bind := Many.bind
+
+-- Um exemplo de busca usando este monad encontra todas as combinacoes de
+-- numeros em uma lista que somam 15:
+
+def addsTo (goal : Nat) : List Nat → Many (List Nat)
+  | [] =>
+    if goal == 0 then
+      pure []
+    else
+      Many.none
+  | x :: xs =>
+    if x > goal then
+      addsTo goal xs
+    else
+      (addsTo goal xs).union
+        (addsTo (goal - x) xs >>= fun answer =>
+         pure (x :: answer))
+
+-- O processo de busca eh recursivo sobre a lista. A lista vazia eh uma busca
+-- bem-sucedida quando o objetivo eh 0; caso contrario, falha. Quando a lista
+-- nao esta vazia, ha duas possibilidades: ou a cabeca da lista eh maior que o
+-- objetivo, caso em que nao pode participar de nenhuma busca bem-sucedida, ou
+-- nao eh, caso em que pode. Se a cabeca da lista nao eh candidata, a busca
+-- prossegue para a cauda da lista. Se a cabeca eh candidata, ha duas
+-- possibilidades a serem combinadas com Many.union: ou as solucoes encontradas
+-- contem a cabeca, ou nao. As solucoes que nao contem a cabeca sao encontradas
+-- com uma chamada recursiva na cauda, enquanto as solucoes que contem resultam
+-- de subtrair a cabeca do objetivo, e entao anexar a cabeca as solucoes que
+-- resultam da chamada recursiva.
+
+-- O auxiliar printList garante que um resultado seja exibido por linha:
+
+def printList [ToString α] : List α → IO Unit
+  | [] => pure ()
+  | x :: xs => do
+    IO.println x
+    printList xs
+
+#eval printList (addsTo 15 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).takeAll
+
+-- Retornando ao avaliador aritmetico que produz multisets de resultados, o
+-- operador choose pode ser usado para selecionar nao-deterministicamente um
+-- valor, com divisao por zero tornando selecoes anteriores invalidas.
+
+inductive NeedsSearch where
+  | div
+  | choose
+
+def applySearch : NeedsSearch → Int → Int → Many Int
+  | NeedsSearch.choose, x, y =>
+    Many.fromList [x, y]
+  | NeedsSearch.div, x, y =>
+    if y == 0 then
+      Many.none
+    else Many.one (x / y)
+
+-- Usando esses operadores, os exemplos anteriores podem ser avaliados:
+
+open Expr Prim NeedsSearch
+
+#eval
+  (evaluateM'' applySearch
+    (prim plus (const 1)
+      (prim (other choose) (const 2)
+        (const 5)))).takeAll
+
+#eval
+  (evaluateM'' applySearch
+    (prim plus (const 1)
+      (prim (other div) (const 2)
+        (const 0)))).takeAll
+
+#eval
+  (evaluateM'' applySearch
+    (prim (other div) (const 90)
+      (prim plus (prim (other choose) (const (-5)) (const 5))
+        (const 5)))).takeAll
+
+
+-- 4.3.3.3. Custom Environments
+
+-- O avaliador pode ser tornado extensivel pelo usuario permitindo que strings
+-- sejam usadas como operadores, e entao fornecendo um mapeamento de strings
+-- para uma funcao que as implementa. Por exemplo, usuarios poderiam estender o
+-- avaliador com um operador de resto ou com um que retorna o maximo de seus
+-- dois argumentos. O mapeamento de nomes de funcao para implementacoes de
+-- funcao eh chamado um environment.
+
+-- Os ambientes precisam ser passados em cada chamada recursiva. Inicialmente,
+-- pode parecer que evaluateM precisa de um argumento extra para manter o
+-- ambiente, e que este argumento deveria ser passado a cada invocacao recursiva.
+-- No entanto, passar um argumento assim eh outra forma de monad, entao uma
+-- instancia Monad apropriada permite que o avaliador seja usado inalterado.
+
+-- Usar funcoes como um monad eh tipicamente chamado de reader monad. Ao avaliar
+-- expressoes no reader monad, as seguintes regras sao usadas:
+-- * Constantes n avaliam para funcoes constantes λe.n
+-- * Operadores aritmeticos avaliam para funcoes que passam seus argumentos
+--   adiante, entao f+g avalia para λe.f(e)+g(e)
+-- * Operadores customizados avaliam para o resultado de aplicar o operador
+--   customizado aos argumentos, entao f OP g avalia para λe.{h(f(e),g(e)) se
+--   e contem (OP,h), 0 caso contrario}, com 0 servindo como fallback caso um
+--   operador desconhecido seja aplicado.
+
+-- Para definir o reader monad em Lean, o primeiro passo eh definir o tipo
+-- Reader e o efeito que permite usuarios obterem o ambiente:
+
+def Reader (ρ : Type) (α : Type) : Type := ρ → α
+
+def read : Reader ρ ρ := fun env => env
+
+-- Por convencao, a letra grega ρ (pronunciada "rho") eh usada para environments.
+
+-- O fato de que constantes em expressoes aritmeticas avaliam para funcoes
+-- constantes sugere que a definicao apropriada de pure para Reader eh uma
+-- funcao constante:
+
+def Reader.pure (x : α) : Reader ρ α := fun _ => x
+
+-- Por outro lado, bind eh um pouco mais complicado. Seu tipo eh
+-- "Reader ρ α → (α → Reader ρ β) → Reader ρ β". Este tipo pode ser mais facil
+-- de entender desdobrando a definicao de Reader, que resulta em
+-- "(ρ → α) → (α → ρ → β) → (ρ → β)". Deve receber uma funcao que aceita
+-- ambiente como seu primeiro argumento, enquanto o segundo argumento deve
+-- transformar o resultado da funcao que aceita ambiente em ainda outra funcao
+-- que aceita ambiente. O resultado de combinar estes eh em si uma funcao,
+-- esperando por um ambiente.
+
+-- Eh possivel usar Lean interativamente para obter ajuda escrevendo esta funcao.
+-- O primeiro passo eh escrever os argumentos e tipo de retorno, sendo muito
+-- explicito para obter o maximo de ajuda possivel, com um underscore para o
+-- corpo da definicao:
+
+def Reader.bind₁ {ρ : Type} {α : Type} {β : Type}
+  (result : ρ → α) (next : α → ρ → β) : ρ → β :=
+  _
+
+-- Lean fornece uma mensagem que descreve quais variaveis estao disponiveis no
+-- escopo, e o tipo esperado para o resultado. O simbolo ⊢, chamado turnstile ou
+-- catraca devido a sua semelhanca com entradas de metro, separa as variaveis
+-- locais do tipo alvo
+
+-- Como o tipo de retorno eh uma funcao, um bom primeiro passo eh envolver um
+-- fun ao redor do underscore:
+
+def Reader.bind₂ {ρ : Type} {α : Type} {β : Type}
+  (result : ρ → α) (next : α → ρ → β) : ρ → β :=
+  fun env => _
+
+-- A mensagem resultante agora mostra o `env` (argumento da funcao) como
+-- variavel local (acima do goal).
+
+-- A unica coisa no contexto que pode produzir um β eh next, e ele requer dois
+-- argumentos para fazer isso. Cada argumento pode em si ser um underscore:
+
+def Reader.bind₃ {ρ : Type} {α : Type} {β : Type}
+  (result : ρ → α) (next : α → ρ → β) : ρ → β :=
+  fun env => next _ _
+
+-- Atacando o primeiro underscore, apenas uma coisa no contexto pode produzir um
+-- α, isto eh result:
+
+def Reader.bind₄ {ρ : Type} {α : Type} {β : Type}
+  (result : ρ → α) (next : α → ρ → β) : ρ → β :=
+  fun env => next (result _) _
+
+-- Agora, ambos underscores tem a mesma mensagem de erro pedindo ρ. Felizmente,
+-- ambos underscores podem ser substituidos por env:
+
+def Reader.bind₅ {ρ : Type} {α : Type} {β : Type}
+  (result : ρ → α) (next : α → ρ → β) : ρ → β :=
+  fun env => next (result env) env
+
+-- A versao final pode ser obtida desfazendo o desdobramento de Reader e
+-- limpando os detalhes explicitos:
+
+def Reader.bind
+    (result : Reader ρ α)
+    (next : α → Reader ρ β) : Reader ρ β :=
+  fun env => next (result env) env
+
+-- Nem sempre eh possivel escrever funcoes corretas simplesmente "seguindo os
+-- tipos", e carrega o risco de nao entender o programa resultante. No entanto,
+-- pode ser mais facil entender um programa que foi escrito do que um que nao
+-- foi, e o processo de preencher os underscores pode trazer insights. Neste
+-- caso, Reader.bind funciona como bind para Id, extrai o valor de `env` usando
+-- result e aplica a funcao next nele, tambem passando o environment adiante.
+
+-- Reader.pure (que gera funcoes constantes) e Reader.bind obedecem o contrato
+-- monad.
+-- Para verificar que "Reader.bind (Reader.pure v) f" eh o mesmo que
+-- "f v", eh so substituir as definicoes:
+-- ⟹ Reader.bind (Reader.pure v) f
+-- ⟹ fun env => f ((Reader.pure v) env) env
+-- ⟹ fun env => f ((fun _ => v) env) env
+-- ⟹ fun env => f v env
+-- ⟹ f v
+-- Para toda funcao f, "fun x => f x" eh o mesmo que f, entao a primeira parte
+-- do contrato eh satisfeita.
+
+-- Para verificar que "Reader.bind r Reader.pure" eh o mesmo que r, uma tecnica
+-- similar funciona:
+-- ⟹ Reader.bind r Reader.pure
+-- ⟹ fun env => Reader.pure (r env) env
+-- ⟹ fun env => (fun _ => (r env)) env
+-- ⟹ fun env => r env
+-- Como acoes reader r sao em si funcoes, isso eh o mesmo que r.
+
+-- Para verificar associatividade, a mesma coisa pode ser feita tanto para
+-- "Reader.bind (Reader.bind r f) g" quanto para
+-- "Reader.bind r (fun x => Reader.bind (f x) g)":
+-- ⟹ Reader.bind (Reader.bind r f) g
+-- ⟹ fun env => g ((Reader.bind r f) env) env
+-- ⟹ fun env => g ((fun env' => f (r env') env') env) env
+-- ⟹ fun env => g (f (r env) env) env
+
+-- "Reader.bind r (fun x => Reader.bind (f x) g)" reduz para a mesma expressao:
+-- ⟹ Reader.bind r (fun x => Reader.bind (f x) g)
+-- ⟹ Reader.bind r (fun x => fun env => g (f x env) env)
+-- ⟹ fun env => (fun x => fun env' => g (f x env') env') (r env) env
+-- ⟹ fun env => (fun env' => g (f (r env) env') env') env
+-- ⟹ fun env => g (f (r env) env) env
+
+-- Assim, uma instancia "Monad (Reader ρ)" eh justificada:
+
+instance : Monad (Reader ρ) where
+  pure x := fun _ => x
+  bind x f := fun env => f (x env) env
+
+-- Os environments que serao passados ao avaliador de expressoes podem
+-- ser representados como listas de pares, com nome e uma funcao para a operacao
+-- binaria.
+
+abbrev Env : Type := List (String × (Int → Int → Int))
+
+-- Por exemplo, exampleEnv contem funcoes de maximo e modulo:
+
+def exampleEnv : Env := [("max", max), ("mod", (· % ·))]
+
+-- Lean ja tem uma funcao List.lookup que encontra o valor associado a uma chave
+-- em uma lista de pares, entao applyPrimReader precisa apenas verificar se a
+-- funcao customizada esta presente no ambiente. Retorna 0 se a funcao eh
+-- desconhecida:
+
+def applyPrimReader (op : String) (x : Int) (y : Int) : Reader Env Int :=
+  read >>= fun env =>
+  match env.lookup op with
+  | none => pure 0
+  | some f => pure (f x y)
+
+-- Usar evaluateM com applyPrimReader e uma expressao resulta em uma funcao que
+-- espera um ambiente. Felizmente, exampleEnv esta disponivel:
+
+open Expr Prim in
+#eval
+  evaluateM'' applyPrimReader
+    (prim (other "max") (prim plus (const 5) (const 4))
+      (prim times (const 3)
+        (const 2)))
+    exampleEnv
+
+-- Como Many, Reader eh um exemplo de um efeito que eh dificil de codificar na
+-- maioria das linguagens, mas type classes e monads o tornam tao conveniente
+-- quanto qualquer outro efeito.
+
+
+-- 4.3.3.4. Exercises
+
+
+-- 4.3.3.4.1. Checking Contracts
+
+-- Check the monad contract for `State σ` and `Except ε`.
+
+/-
+  First, pure should be a left identity of bind. That is, bind (pure v) f should
+    be the same as f v.
+  Secondly, pure should be a right identity of bind, so bind v pure is the same
+    as v.
+  Finally, bind should be associative, so bind (bind v f) g is the same as
+    bind v (fun x => bind (f x) g).
+-/
+#check State
+#check Except
+
+-- bind (pure v) f
+-- ⟹ bind (fun s => (s, x)) f
+-- ⟹ fun s =>
+--      let (s', x) := (fun s => (s, x)) s
+--      f x s'
+-- ⟹ fun s =>
+--      let (s', x) := (s, v) s
+--      f x s'
+-- ⟹ fun s => f v s
+
+-- bind (Except.ok v) pure
+-- ⟹ match v with
+--     | Except.error v => Except.error v
+--     | Except.ok v    => pure v
+-- ⟹ pure v
+-- ⟹ Except.ok v
+
+
+-- 4.3.3.4.2. Readers with Failure
