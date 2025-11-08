@@ -1476,3 +1476,190 @@ open Expr Prim in
 
 
 -- 4.3.3.4.2. Readers with Failure
+
+-- Adapt the reader monad example so that it can also indicate failure when the
+-- custom operator is not defined, rather than just returning zero. In other
+-- words, given these definitions:
+
+def ReaderOption (ρ : Type) (α : Type) : Type := ρ → Option α
+def ReaderExcept (ε : Type) (ρ : Type) (α : Type) : Type := ρ → Except ε α
+
+-- do the following:
+
+/-
+  * Write suitable pure and bind functions
+  * Check that these functions satisfy the Monad contract
+  * Write Monad instances for ReaderOption and ReaderExcept
+  * Define suitable applyPrim operators and test them with evaluateM on some example expressions
+-/
+
+def ReaderOption.pure (x : α) : ReaderOption ρ α :=
+  fun _ => Option.some x
+
+def ReaderOption.bind
+    (result : ReaderOption ρ α) (next : α → ReaderOption ρ β) : ReaderOption ρ β :=
+  fun env =>
+    result env >>= fun x => next x env
+  -- ou
+  -- fun env =>
+  --   match result env with
+  --   | Option.some x => next x env
+  --   | Option.none   => Option.none
+
+instance : Monad (ReaderOption ρ) where
+  pure := ReaderOption.pure
+  bind := ReaderOption.bind
+
+def ReaderExcept.pure (x : α) : ReaderExcept ε ρ α :=
+  fun _ => Except.ok x
+
+def ReaderExcept.bind
+    (result : ReaderExcept ε ρ α)
+    (next : α → ReaderExcept ε ρ β) : ReaderExcept ε ρ β :=
+  fun env =>
+    result env >>= fun x => next x env
+
+instance : Monad (ReaderExcept ε ρ) where
+  pure := ReaderExcept.pure
+  bind := ReaderExcept.bind
+
+def readOptionEnv : ReaderOption ρ ρ := fun env => Option.some env
+def readExceptEnv : ReaderExcept ε ρ ρ := fun env => Except.ok env
+
+def applySpecialReaderOption (op : String) (x : Int) (y : Int) : ReaderOption Env Int :=
+  readOptionEnv >>= fun env =>
+    match env.lookup op with
+    | none => fun _ => none
+    | some f => pure (f x y)
+
+def applySpecialReaderExcept (op : String) (x : Int) (y : Int) : ReaderExcept String Env Int :=
+  readExceptEnv >>= fun env =>
+    match env.lookup op with
+    | none => fun _ => Except.error s!"unknown operation: {op}"
+    | some f => pure (f x y)
+
+-- Teste 1: Usa operador que EXISTE ("max")
+open Expr Prim in
+def exprMaxExists : Expr (Prim String) :=
+  prim (other "max") (const 10) (const 5)
+
+-- Teste 2: Usa operador que NAO EXISTE ("pow")
+open Expr Prim in
+def exprPowNotExists : Expr (Prim String) :=
+  prim (other "pow") (const 2) (const 3)
+
+-- Teste 3: Combina operadores normais com custom que existe ("mod")
+open Expr Prim in
+def exprMixedExists : Expr (Prim String) :=
+  prim plus (const 10)
+    (prim (other "mod") (const 17) (const 5))
+
+-- Teste 4: Combina operadores normais com custom que NAO existe ("div")
+open Expr Prim in
+def exprMixedNotExists : Expr (Prim String) :=
+  prim times (const 2)
+    (prim (other "div") (const 10) (const 3))
+
+-- Teste 5: mais complexa com multiplos operadores custom
+open Expr Prim in
+def exprComplexMixed : Expr (Prim String) :=
+  prim (other "max")
+    (prim plus (const 5) (const 3))
+    (prim (other "mod") (const 20) (const 7))
+
+-- Teste 6: Apenas operadores normais (sem custom)
+open Expr Prim in
+def exprNormalOnly : Expr (Prim String) :=
+  prim plus
+    (prim times (const 3) (const 4))
+    (prim minus (const 20) (const 5))
+
+-- Eval com ReaderOption:
+
+#eval evaluateM'' applySpecialReaderOption exprMaxExists exampleEnv
+#eval evaluateM'' applySpecialReaderOption exprPowNotExists exampleEnv
+#eval evaluateM'' applySpecialReaderOption exprMixedExists exampleEnv
+#eval evaluateM'' applySpecialReaderOption exprMixedNotExists exampleEnv
+#eval evaluateM'' applySpecialReaderOption exprComplexMixed exampleEnv
+#eval evaluateM'' applySpecialReaderOption exprNormalOnly exampleEnv
+
+-- Eval com ReaderExcept:
+
+#eval evaluateM'' applySpecialReaderExcept exprMaxExists exampleEnv
+#eval evaluateM'' applySpecialReaderExcept exprPowNotExists exampleEnv
+#eval evaluateM'' applySpecialReaderExcept exprMixedExists exampleEnv
+#eval evaluateM'' applySpecialReaderExcept exprMixedNotExists exampleEnv
+#eval evaluateM'' applySpecialReaderExcept exprComplexMixed exampleEnv
+#eval evaluateM'' applySpecialReaderExcept exprNormalOnly exampleEnv
+
+
+-- 4.3.3.4.3. A Tracing Evaluator
+
+-- The WithLog type can be used with the evaluator to add optional tracing of
+-- some operations. In particular, the type ToTrace can serve as a signal to
+-- trace a given operator:
+
+inductive ToTrace (α : Type) : Type where
+  | trace : α → ToTrace α
+
+-- For the tracing evaluator, expressions should have type
+-- `Expr (Prim (ToTrace (Prim Empty)))`. This says that the operators in the
+-- expression consist of addition, subtraction, and multiplication, augmented
+-- with traced versions of each. The innermost argument is Empty to signal that
+-- there are no further special operators inside of trace, only the three basic ones.
+
+/-
+  * Implement a Monad (WithLog logged) instance
+  * Write an applyTraced function to apply traced operators to their arguments,
+    logging both the operator and the arguments, with type
+    `ToTrace (Prim Empty) → Int → Int → WithLog (Prim Empty × Int × Int) Int`
+-/
+
+#check (Prim (ToTrace (Prim Empty)))
+
+def WithLog.pure (x : α) : WithLog logged α :=
+  {log := [], val := x}
+
+def WithLog.bind
+    (result : WithLog γ α) (next : α → WithLog γ β) : WithLog γ β :=
+  let {log := thisOut, val := thisRes} := result
+  let {log := nextOut, val := nextRes} := next thisRes
+  {log := thisOut ++ nextOut, val := nextRes}
+
+instance : Monad (WithLog logged) where
+  pure := WithLog.pure
+  bind := WithLog.bind
+
+-- def applyTraced (op : ToTrace (Prim Empty)) (x : Int) (y :Int)
+--     : WithLog (Prim Empty × Int × Int) Int :=
+--   match op with
+--   | ToTrace.trace o =>
+--     match o with
+--     | Prim.plus => {log := [(o, x, y)], val := x + y}
+--     | Prim.minus => {log := [(o, x, y)], val := x - y}
+--     | Prim.times => {log := [(o, x, y)], val := x * y}
+
+def applyTraced : ToTrace (Prim Empty) → Int → Int → WithLog (Prim Empty × Int × Int) Int
+  | ToTrace.trace o, x, y =>
+    save (o, x, y) >>= fun () =>
+    applyPrim' (fun e => nomatch e) o x y
+
+-- Dica: valores do tipo Prim Empty vao aparecer no log resultante. Para serem
+-- mostrados como resultado do #eval precisam das instancias:
+
+deriving instance Repr for WithLog
+deriving instance Repr for Empty
+deriving instance Repr for Prim
+
+-- Teste:
+open Expr Prim ToTrace in
+#eval
+  evaluateM'' applyTraced
+    (prim (other (trace times))
+      (prim (other (trace plus)) (const 1)
+        (const 2))
+      (prim (other (trace minus)) (const 3)
+        (const 4)))
+
+-- Deve virar:
+-- { log := [(Prim.plus, 1, 2), (Prim.minus, 3, 4), (Prim.times, 3, -1)], val := -3 }
