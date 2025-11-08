@@ -1663,3 +1663,173 @@ open Expr Prim ToTrace in
 
 -- Deve virar:
 -- { log := [(Prim.plus, 1, 2), (Prim.minus, 3, 4), (Prim.times, 3, -1)], val := -3 }
+
+
+-- 4.4. do-Notation for Monads
+
+-- Embora APIs baseadas em monads sejam muito poderosas, o uso explicito de `>>=`
+-- com funcoes anonimas ainda eh um pouco feio. Entao pode ser usada da mesma
+-- do-notation usada para escrever programas em IO (tambem eh um monad).
+
+-- A primeira traducao de `do` eh usada quando a unica declaracao no `do` eh uma
+-- expressao E. Neste caso, o `do` eh removido, entao:
+-- ⟹ do E
+-- ⟹ E
+-- _APENAS FACA `E`_
+
+-- A segunda eh usada quando a primeira declaracao do `do` eh um let com seta,
+-- vinculando uma variavel local. Isso traduz para um uso de `>>=` junto com
+-- uma funcao anonima que usa essa mesma variavel, entao:
+-- ⟹ do let x ← E₁
+--       Stmt x
+--       …
+--       Eₙ
+-- ⟹ E₁ >>= fun x =>
+--     do Stmt
+--        …
+--        Eₙ
+-- _Executa E₁ pega o resultado e usa depois_
+
+-- Quando a primeira declaracao do bloco `do` eh uma expressao, entao eh considerada
+-- uma acao monadica que retorna Unit, entao a funcao corresponde ao construtor
+-- Unit e:
+-- ⟹ do E₁
+--       Stmt
+--       …
+--       Eₙ
+-- ⟹ E₁ >>= fun () =>
+--     do Stmt
+--        …
+--        Eₙ
+-- _Executa E₁ (que deve retornar `m Unit`), ignora o (), e continua_
+
+-- Finalmente, quando a primeira declaracao do bloco `do` eh um let que usa :=,
+-- a forma traduzida eh uma expressao let comum, entao:
+-- ⟹ do let x := E₁
+--       Stmt
+--       …
+--       Eₙ
+-- ⟹ let x := E₁
+--   do Stmt
+--      …
+--      Eₙ
+-- _Mesma coisa `let x := ⋯` dentro ou fora (nao tem efeito)_
+
+-- A definicao de firstThirdFifthSeventh que usa a classe Monad se parece com:
+
+def firstThirdFifthSeventhBind [Monad m] (lookup : List α → Nat → m α)
+    (xs : List α) : m (α × α × α × α) :=
+  lookup xs 0 >>= fun first =>
+  lookup xs 2 >>= fun third =>
+  lookup xs 4 >>= fun fifth =>
+  lookup xs 6 >>= fun seventh =>
+  pure (first, third, fifth, seventh)
+
+-- Usando do-notation, se torna significativamente mais legivel:
+
+def firstThirdFifthSeventhDo [Monad m] (lookup : List α → Nat → m α)
+    (xs : List α) : m (α × α × α × α) := do
+  let first ← lookup xs 0
+  let third ← lookup xs 2
+  let fifth ← lookup xs 4
+  let seventh ← lookup xs 6
+  pure (first, third, fifth, seventh)
+
+-- Sem a type class Monad, a funcao number que numera os nos de uma arvore foi
+-- escrita:
+
+def numberOld (t : BinTree α) : BinTree (Nat × α) :=
+  let rec helper : BinTree α → State Nat (BinTree (Nat × α))
+    | BinTree.leaf => okState BinTree.leaf
+    | BinTree.branch left x right =>
+      helper left ~~> fun numberedLeft =>
+      getState ~~> fun n =>
+      setState (n + 1) ~~> fun () =>
+      helper right ~~> fun numberedRight =>
+      okState (BinTree.branch numberedLeft (n, x) numberedRight)
+  (helper t 0).snd
+
+-- Com Monad e `do`, sua definicao eh muito menos feia:
+
+def numberDo (t : BinTree α) : BinTree (Nat × α) :=
+  let rec helper : BinTree α → State Nat (BinTree (Nat × α))
+    | BinTree.leaf => pure BinTree.leaf
+    | BinTree.branch left x right => do
+      let numberedLeft ← helper left
+      let n ← getState
+      setState (n + 1)
+      let numberedRight ← helper right
+      pure (BinTree.branch numberedLeft (n, x) numberedRight)
+  (helper t 0).snd
+
+-- Todas as conveniencias do `do` com IO tambem estao disponiveis ao usa-lo com
+-- outros monads. Por exemplo, acoes aninhadas tambem funcionam em qualquer monad.
+-- A definicao original de mapM era:
+
+def mapMBind [Monad m] (f : α → m β) : List α → m (List β)
+  | [] => pure []
+  | x :: xs =>
+    f x >>= fun hd =>
+    mapMBind f xs >>= fun tl =>
+    pure (hd :: tl)
+
+-- Com do-notation, pode ser escrita:
+
+def mapMDo [Monad m] (f : α → m β) : List α → m (List β)
+  | [] => pure []
+  | x :: xs => do
+    let hd ← f x
+    let tl ← mapMDo f xs
+    pure (hd :: tl)
+
+-- Usando acoes aninhadas a torna quase tao curta quanto o map original
+-- nao-monadico:
+
+def mapMNested [Monad m] (f : α → m β) : List α → m (List β)
+  | [] => pure []
+  | x :: xs => do
+    pure ((← f x) :: (← mapMNested f xs))
+
+-- Usando acoes aninhadas, number pode ser tornado muito mais conciso:
+
+def incrementDo : State Nat Nat := do
+  let n ← getState
+  setState (n + 1)
+  pure n
+
+def numberNested (t : BinTree α) : BinTree (Nat × α) :=
+  let rec helper : BinTree α → State Nat (BinTree (Nat × α))
+    | BinTree.leaf => pure BinTree.leaf
+    | BinTree.branch left x right => do
+      pure
+        (BinTree.branch
+          (← helper left)
+          ((← incrementDo), x)
+          (← helper right))
+  (helper t 0).snd
+
+
+-- 4.4.1. Exercises
+
+/-
+  * Rewrite evaluateM, its helpers, and the different specific use cases using
+    do-notation instead of explicit calls to >>=.
+
+  * Rewrite firstThirdFifthSeventh using nested actions.
+-/
+
+def evaluateMDo [Monad m] (applyPrim : Arith → Int → Int → m Int) :
+    Expr Arith → m Int
+  | Expr.const i => pure i
+  | Expr.prim p e1 e2 => do
+    let v1 ← evaluateMDo applyPrim e1
+    let v2 ← evaluateMDo applyPrim e2
+    applyPrim p v1 v2
+    -- applyPrim p (← evaluateMDo applyPrim e1) (← evaluateMDo applyPrim e2)
+
+def firstThirdFifthSeventhMonadDo [Monad m] (lookup : List α → Nat → m α)
+    (xs : List α) : m (α × α × α × α) := do
+  pure ((← lookup xs 0), (← lookup xs 2), (← lookup xs 4), (← lookup xs 6))
+
+
+-- 4.5. The IO Monad
