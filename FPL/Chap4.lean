@@ -1833,3 +1833,110 @@ def firstThirdFifthSeventhMonadDo [Monad m] (lookup : List α → Nat → m α)
 
 
 -- 4.5. The IO Monad
+
+-- IO como um monad pode ser entendido de duas perspectivas:
+
+-- Da primeira perspectiva, uma acao IO eh uma instrucao para o run-time system
+-- do Lean. Por exemplo, a instrucao pode ser "leia uma string deste file
+-- descriptor, entao re-invoque o codigo Lean puro com a string". Essa
+-- perspectiva eh uma visao exterior, vendo o programa da perspectiva do sistema
+-- operacional. Neste caso, pure eh uma acao IO que nao requisita nenhum efeito
+-- do run-time system, e bind o instrui a primeiro executar uma operacao
+-- potencialmente com efeitos e entao invocar o resto do programa com o valor
+-- resultante.
+
+-- Da segunda perspectiva, uma acao IO transforma o mundo inteiro. Acoes IO sao
+-- na verdade puras, porque recebem um mundo unico como argumento e entao
+-- retornam o mundo modificado (World -> World). Esta perspectiva eh uma visao
+-- interior que corresponde a como o IO eh representado dentro de Lean. No Lean,
+-- o mundo eh representado como um token, e o monad IO eh estruturado para
+-- garantir que cada token seja usado exatamente uma vez.
+
+-- Para ver como isso funciona, pode ser util olhar uma definicao por vez. O
+-- comando #print mostra um pouco dos datatypes e definicoes:
+
+#print Nat
+
+#print Char.isAlpha
+
+-- As vezes, a saida de #print inclui recursos Lean que ainda nao foram
+-- apresentados no livro. Por exemplo:
+
+#print List.isEmpty
+
+-- que inclui um .{u} apos o nome da definicao, e anota tipos como Type u em vez
+-- de apenas Type. Isso pode ser ignorado com seguranca por enquanto.
+
+-- Imprimir a definicao de IO mostra que eh definida em termos de estruturas mais
+-- simples:
+
+#print IO
+
+-- IO.Error representa todos os erros possiveis para uma acao IO.
+
+#print IO.Error
+
+-- EIO ε α representa acoes IO que vao ou terminar com um erro de tipo `ε` ou
+-- suceder com um valor de tipo `α`. Isso significa que, como o monad `Except ε`,
+-- o monad IO inclui a capacidade de definir tratamento de erro e exceptions.
+
+-- Descascando outra camada, EIO eh em si definido em termos de uma estrutura
+-- mais simples:
+
+#print EIO
+
+-- O monad `EStateM` inclui tanto erros quanto um estado, parecido com uma
+-- combinacao de Except e State. Eh definido usando outro tipo, EStateM.Result:
+
+#print EStateM
+
+-- Em outras palavras, um programa com tipo `EStateM ε σ α` eh uma funcao que
+-- aceita um estado inicial de tipo `σ` e retorna um `EStateM.Result ε σ α`.
+
+-- EStateM.Result eh muito parecido com o Except, com um construtor indicando
+-- uma terminacao bem-sucedida e outro que indica um erro:
+
+#print EStateM.Result
+
+-- Igual ao `Except ε α`, o construtor ok inclui um resultado de tipo `α`, e o
+-- construtor error inclui uma exception de tipo `ε`. Diferente de Except, ambos
+-- construtores tem um campo de estado adicional que inclui o estado final da
+-- computacao.
+
+-- A instancia Monad para `EStateM ε σ` requer pure e bind. Assim como com State,
+-- a implementacao de pure para EStateM aceita um estado inicial e o retorna
+-- inalterado, e assim como com Except, retorna seu argumento no construtor ok:
+
+#print EStateM.pure
+
+-- `protected` significa que o nome completo EStateM.pure eh necessario mesmo se
+-- o namespace EStateM foi aberto.
+
+-- Similarmente, bind para EStateM recebe um estado inicial como argumento. Ele
+-- passa este estado inicial para sua primeira acao. Entao, se o resultado for
+-- um erro, ele eh retornado inalterado e o segundo argumento de bind nao eh usado.
+-- Se o resultado foi um sucesso, entao o segundo argumento eh aplicado tanto ao
+-- valor retornado quanto ao estado resultante.
+
+#print EStateM.bind
+
+-- Juntando tudo isso, IO eh um monad que rastreia estado e erros ao mesmo tempo.
+-- A colecao de erros disponiveis eh aquela dada pelo datatype IO.Error, que tem
+-- construtores que descrevem muitas coisas que podem dar errado em um programa.
+-- O estado eh um tipo que representa o mundo real, chamado IO.RealWorld. Cada
+-- acao IO basica recebe este mundo real e retorna outro, junto ou com um erro
+-- ou um resultado. Em IO, pure retorna o mundo inalterado, enquanto bind
+-- passa o mundo modificado por uma acao para a proxima acao.
+
+-- Como o universo inteiro nao cabe na memoria de um computador, o mundo sendo
+-- passado por ai eh apenas uma representacao. Contanto que tokens de mundo nao
+-- sejam reutilizados, a representacao eh segura. Isso significa que tokens de
+-- mundo nao precisam conter nenhum dado:
+
+#print IO.RealWorld
+
+
+-- 4.6. Additional Conveniences
+
+
+-- 4.6.1. Shared Argument Types
