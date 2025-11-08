@@ -1940,3 +1940,178 @@ def firstThirdFifthSeventhMonadDo [Monad m] (lookup : List α → Nat → m α)
 
 
 -- 4.6.1. Shared Argument Types
+
+-- Ao definir uma funcao que recebe multiplos argumentos que tem o mesmo tipo,
+-- eles podem ser escritos juntos:
+
+def equal?₁ [BEq α] (x : α) (y : α) : Option α :=
+  sorry
+
+-- pode ser escrito:
+
+def equal?₂ [BEq α] (x y : α) : Option α :=
+  sorry
+
+
+-- 4.6.2. Leading Dot Notation
+
+-- Os construtores de um tipo indutivo estao em um namespace. Isso permite que
+-- multiplos tipos indutivos relacionados usem os mesmos nomes de construtores,
+-- mas pode levar programas a ficarem verbosos. Em contextos que o tipo
+-- indutivo eh conhecido, o namespace pode ser omitido, deixando apenas um ponto.
+
+def BinTree.mirror₁ : BinTree α → BinTree α
+  | BinTree.leaf => BinTree.leaf
+  | BinTree.branch l x r => BinTree.branch (mirror₁ r) x (mirror₁ l)
+
+def BinTree.mirror₂ : BinTree α → BinTree α
+  | .leaf => .leaf
+  | .branch l x r => .branch (mirror₂ r) x (mirror₂ l)
+
+-- Usar o tipo esperado de uma expressao para desambiguar um namespace tambem eh
+-- aplicavel a nomes outros que nao construtores. Se BinTree.empty eh definido
+-- como uma forma alternativa de criar BinTrees, entao tambem pode ser usado com
+-- notacao de ponto:
+
+def BinTree.empty : BinTree α := .leaf
+
+
+-- 4.6.3. Or-Patterns
+
+-- Em contextos que permitem multiplos padroes, como match-expressions, multiplos
+-- padroes podem compartilhar suas expressoes de resultado. O datatype Weekday
+-- que representa dias da semana:
+
+inductive Weekday where
+  | monday
+  | tuesday
+  | wednesday
+  | thursday
+  | friday
+  | saturday
+  | sunday
+deriving Repr
+
+-- Pattern matching pode ser usado para verificar se um dia eh fim de semana:
+
+def Weekday.isWeekend₁ (day : Weekday) : Bool :=
+  match day with
+  | Weekday.saturday => true
+  | Weekday.sunday => true
+  | _ => false
+
+-- Isso ja pode ser simplificado usando notacao de ponto de construtor:
+
+def Weekday.isWeekend₂ (day : Weekday) : Bool :=
+  match day with
+  | .saturday => true
+  | .sunday => true
+  | _ => false
+
+-- Como ambos padroes de fim de semana tem a mesma expressao de resultado (true),
+-- eles podem ser condensados em um:
+
+def Weekday.isWeekend₃ (day : Weekday) : Bool :=
+  match day with
+  | .saturday | .sunday => true
+  | _ => false
+
+-- Isso pode ser ainda mais simplificado em uma versao na qual o argumento nao
+-- eh nomeado:
+
+def Weekday.isWeekend₄ : Weekday → Bool
+  | .saturday | .sunday => true
+  | _ => false
+
+-- Por tras das cenas, a expressao de resultado eh simplesmente duplicada atraves
+-- de cada padrao. Isso permite:
+
+def condense : α ⊕ α → α
+  | .inl x | .inr x => x
+
+-- Como a expressao de resultado eh duplicada, as variaveis vinculadas pelos
+-- padroes nao sao obrigadas a ter os mesmos tipos. Funcoes sobrecarregadas que
+-- funcionam para multiplos tipos podem ser usadas para escrever uma unica
+-- expressao que funciona para tipos diferentes:
+
+def stringy : Nat ⊕ Weekday → String
+  | .inl x | .inr x => s!"It is {repr x}"
+
+-- Na pratica, apenas variaveis que aparecem em todos os padroes podem ser
+-- referidas na expressao de resultado:
+
+def getTheNat : (Nat × α) ⊕ (Nat × β) → Nat
+  | .inl (n, x) | .inr (n, y) => n
+
+-- Tentar acessar x em uma definicao similar causa um erro porque nao ha x
+-- disponivel no segundo padrao:
+
+def getTheAlpha : (Nat × α) ⊕ (Nat × α) → α
+  | .inl (n, x) | .inr (n, y) => x
+
+-- Usar or-patterns pode simplificar algumas definicoes e aumentar a clareza,
+-- como em `Weekday.isWeekend`. Como ha um potencial para comportamento confuso,
+-- eh uma boa ideia ter cuidado ao usa-los, especialmente quando variaveis de
+-- varios tipos ou conjuntos disjuntos de variaveis estao envolvidos.
+
+
+-- 4.7. Summary
+
+
+-- 4.7.1. Encoding Side Effects
+
+-- Lean eh uma linguagem funcional pura. Isso significa que nao inclui efeitos
+-- colaterais. No entanto, a maioria dos efeitos colaterais pode ser codificada
+-- usando uma combinacao de funcoes e tipos indutivos ou estruturas. Por exemplo,
+-- um estado mutavel pode ser codificado como uma funcao de um estado inicial
+-- para um par de um estado final e um resultado, e exceptions podem ser
+-- codificadas como um tipo indutivo com construtores para terminacao
+-- bem-sucedida e para erros.
+
+-- Cada conjunto de efeitos codificados eh um tipo. Como resultado, se um
+-- programa usa esses efeitos codificados, entao isso eh aparente no seu tipo.
+-- Programacao funcional nao significa que programas nao podem usar efeitos,
+-- simplesmente requer que sejam honestos sobre quais efeitos usam. Uma
+-- assinatura de tipo Lean descreve nao apenas os tipos de argumentos que uma
+-- funcao espera e o tipo de resultado que retorna, mas tambem quais efeitos
+-- pode usar.
+
+
+-- 4.7.2. The Monad Type Class
+
+-- Eh possivel escrever programas puramente funcionais em linguagens que permitem
+-- efeitos em qualquer lugar. Por exemplo, 2 + 3 eh um programa Python valido
+-- que nao tem efeitos. Similarmente, combinar programas que tem efeitos requer
+-- uma forma de declarar a ordem que os efeitos devem ocorrer. Eh importante se
+-- uma exception foi lancada antes ou depois de modificar uma variavel.
+
+-- A type class Monad captura essas duas propriedades importantes. Tem dois
+-- metodos: pure representa programas que nao tem efeitos, e bind sequencia
+-- programas com efeitos. O contrato para instancias Monad garante que bind e
+-- pure realmente sao corretos.
+
+
+-- 4.7.3. do-Notation for Monads
+
+-- Em vez de estar limitada a IO, do-notation funciona para qualquer monad. Ela
+-- permite que programas que usam monads sejam escritos em um estilo que lembra
+-- linguagens com declaracoes sequenciadas uma apos a outra. do-notation
+-- habilita alguns detalhes convenientes como acoes aninhadas (nested actions).
+-- Um programa escrito com do eh traduzido para aplicacoes de >>= por tras das cenas.
+
+
+-- 4.7.4. Custom Monads
+
+-- Linguagens diferentes fornecem conjuntos diferentes de efeitos colaterais.
+-- Uma vantagem de codificar efeitos com monads eh que programas nao estao
+-- limitados ao conjunto de efeitos fornecidos pela linguagem. Em lean,
+-- programadores sao livres para escolher exatamente o conjunto de efeitos
+-- colaterais que fazem sentido para qualquer aplicacao dada.
+
+
+-- 4.7.5. The IO Monad
+
+-- Programas que podem afetar o mundo real sao escritos como acoes IO em Lean.
+-- IO eh um monad entre muitos. O monad IO codifica estado e exceptions, com o
+-- estado sendo usado para rastrear o estado do mundo e as exceptions modelando
+-- falha e recuperacao.
