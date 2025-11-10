@@ -180,3 +180,202 @@ def domesticatedTroll : MonstrousAssistant where
 
 
 -- 5.1.1.1. Default Declarations
+
+-- Default Declarations permitem calcular automaticamente os campos da estrutura
+-- pai a partir dos campos da estrutura filha.
+
+inductive Size where
+  | small
+  | medium
+  | large
+deriving BEq
+
+structure SizedCreature extends MythicalCreature where
+  size : Size                  -- campo novo
+  large := size == Size.large  -- default declaration
+
+-- As definicoes na estrutura filha sao usadas apenas quando nenhum valor
+-- especifico para large eh fornecido, o que permite resultados sem sentido:
+
+def nonsenseCreature : SizedCreature where
+  large := false
+  size := .large
+
+-- Se a estrutura filha nao deve se desviar da estrutura pai, ha algumas opcoes:
+-- 1. Documentar a relacao, como eh feito para BEq e Hashable
+-- 2. Definir uma proposicao de que os campos estao relacionados apropriadamente,
+--    e projetar a API para requerer evidencia de que a proposicao eh verdadeira
+-- 3. Nao usar heranca
+
+-- A segunda opcao poderia parecer assim:
+
+abbrev SizesMatch (sc : SizedCreature) : Prop :=
+  sc.large = (sc.size == Size.large)
+
+-- Note que um unico sinal de igualdade eh usado para indicar a proposicao de
+-- igualdade, enquanto um sinal duplo de igualdade eh usado para indicar uma
+-- funcao que verifica igualdade e retorna um Bool. SizesMatch eh definido como
+-- abbrev porque deve ser automaticamente desdobrado em provas, para que decide
+-- possa ver a igualdade que deve ser provada.
+
+-- Para uma criatura mitica de tamanho medio, os dois campos de tamanho em
+-- correspondem um ao outro:
+
+def huldre : SizedCreature where
+  size := .medium
+
+example : SizesMatch huldre := by
+  decide
+
+#eval huldre.large
+
+-- Default declaration sempre sao aplicadas automaticamente na criacao, uma Porp
+-- pode ser usada para verificar se ela faz sentido. Em uma API que usa esse
+-- modelo seria responsabilidade do usuario provar a consistencia.
+
+
+-- 5.1.1.2. Type Class Inheritance
+
+-- Por tras das cenas, type classes sao structures. Definir uma nova type class
+-- define uma nova estrutura, e definir uma instancia cria um valor desse tipo
+-- de estrutura. Eles sao entao adicionados a tabelas internas no Lean que
+-- permitem encontra-los sob demanda. Uma consequencia disso eh que type classes
+-- podem herdar de outras type classes.
+
+-- Por usar as mesmas features, heranca de type class suporta todos os recursos
+-- da heranca de estrutura, incluindo heranca multipla, implementacoes padrao
+-- dos metodos dos tipos pai, e colapso automatico de diamantes (escolhe o
+-- primeiro lado). Isso eh util em muitas das mesmas situacoes em que heranca de
+-- multiplas interfaces eh util em linguagens como Java, C# e Kotlin. Ao
+-- projetar cuidadosamente hierarquias de heranca de type class, programadores
+-- podem obter o melhor dos dois mundos: uma colecao refinada de abstracoes
+-- implementaveis independentemente, e construcao automatica dessas abstracoes
+-- especificas a partir de abstracoes maiores e mais gerais.
+
+
+-- 5.2. Applicative Functors
+
+-- Um applicative functor eh um functor que tem duas operacoes adicionais
+-- disponiveis: pure e seq. pure eh o mesmo operador usado em Monad, porque
+-- Monad na verdade herda de Applicative. seq eh muito parecido com map: permite
+-- que uma funcao seja usada para transformar o conteudo de um datatype. No
+-- entanto, com seq, a funcao em si esta contida no datatype:
+-- `f (α → β) → (Unit → f α) → f β`. Ter a funcao sob o tipo f permite que a
+-- instancia Applicative controle como a funcao eh aplicada, enquanto
+-- Functor.map incondicionalmente aplica uma funcao. O segundo argumento tem um
+-- tipo que comeca com `Unit →` para permitir que a definicao de seq
+-- curto-circuite em casos onde a funcao nunca sera aplicada.
+
+#check Applicative
+#check (· <$> ·)
+#check (· <*> ·)
+
+-- O valor desse comportamento de curto-circuito pode ser visto na instancia de
+-- Applicative Option:
+
+instance : Applicative Option where
+  pure x := .some x
+  seq f x :=
+    match f with
+    | none => none
+    | some g => g <$> x ()
+
+-- Neste caso, se nao ha funcao para seq aplicar, entao nao ha necessidade de
+-- computar seu argumento, entao x nunca eh chamado. A mesma consideracao informa
+-- a instancia de Applicative para Except:
+
+instance : Applicative (Except ε) where
+  pure x := .ok x
+  seq f x :=
+    match f with
+    | .error e => .error e
+    | .ok g => g <$> x ()
+
+-- Ate agora igual ao monad...
+
+-- Este comportamento de curto-circuito depende apenas das estruturas Option ou
+-- Except que envolvem a funcao, em vez da funcao em si.
+
+-- Monads podem ser vistos como uma forma de capturar a nocao de executar
+-- declaracoes sequencialmente em uma linguagem funcional pura. O resultado de
+-- uma declaracao pode afetar quais declaracoes posteriores executam. Isso pode
+-- ser visto no tipo de bind: `m α → (α → m β) → m β`. O valor resultante da
+-- primeira declaracao eh uma entrada para uma funcao que computa a proxima
+-- declaracao a executar. Usos sucessivos de bind sao como uma sequencia de
+-- declaracoes em uma linguagem de programacao imperativa, e bind eh poderoso o
+-- suficiente para implementar estruturas de controle como condicionais e loops.
+
+-- Seguindo esta analogia, Applicative captura aplicacao de funcao em uma
+-- linguagem que tem efeitos colaterais. Os argumentos para uma funcao em
+-- linguagens como Kotlin ou C# sao avaliados da esquerda para a direita.
+-- Efeitos colaterais realizados por argumentos anteriores ocorrem antes
+-- daqueles realizados por argumentos posteriores. Uma funcao por si so nao eh
+-- poderosa o suficiente para implementar operadores de curto-circuito
+-- customizados que dependem do valor especifico de um argumento.
+
+-- Tipicamente, seq nao eh invocado diretamente. Em vez disso, o operador <*> eh
+-- usado. Este operador envolve seu segundo argumento em `fun () => ...`,
+-- simplificando o local de chamada. Em outras palavras, `E1 <*> E2` eh
+-- syntactic sugar para `Seq.seq E1 (fun () => E2)`.
+
+-- Applicative provavelmente vai substituir os Monads que usavam `fun () =>...`
+-- antes.
+
+-- Currying permite seq ser usado com multiplos argumentos. Por exemplo:
+-- `some Plus.plus` pode ter o tipo `Option (Nat → Nat → Nat)`. Fornecer um
+-- argumento, `some Plus.plus <*> some 4`, resulta no tipo `Option (Nat → Nat)`.
+-- Isso pode ser usado com seq novamente, entao
+-- `some Plus.plus <*> some 4 <*> some 7` tem o tipo `Option Nat`.
+
+-- Nem todo functor eh applicative. Pair eh parecido com o tipo Prod:
+
+structure Pair (α β : Type) : Type where
+  first : α
+  second : β
+
+-- Como Except, Pair tem tipo `Type → Type → Type`. Isso significa que `Pair α`
+-- tem tipo `Type → Type`, e uma instancia Functor eh possivel:
+
+instance : Functor (Pair α) where
+  map f x := ⟨x.first, f x.second⟩
+
+-- Esta instancia obedece o contrato Functor.
+
+-- As duas propriedades a verificar sao que `id <$> Pair.mk x y = Pair.mk x y` e
+-- que `f <$> g <$> Pair.mk x y = (f ∘ g) <$> Pair.mk x y`. A primeira
+-- propriedade pode ser verificada apenas percorrendo a avaliacao do lado
+-- esquerdo:
+-- ⟹ id <$> Pair.mk x y
+-- ⟹ Pair.mk x (id y)
+-- ⟹ Pair.mk x y
+
+-- A segunda pode ser verificada percorrendo ambos os lados, e notando que
+-- produzem o mesmo resultado:
+-- ⟹ f <$> g <$> Pair.mk x y
+-- ⟹ f <$> Pair.mk x (g y)
+-- ⟹ Pair.mk x (f (g y))
+-- ⟹ (f ∘ g) <$> Pair.mk x y
+-- ⟹ Pair.mk x ((f ∘ g) y)
+-- ⟹ Pair.mk x (f (g y))
+
+-- Tentar definir uma instancia Applicative, no entanto, nao funciona tao bem.
+-- Requer uma definicao de pure:
+
+#check pure
+
+def Pair.pure (x : β) : Pair α β := _
+
+-- Ja tem um valor do tipo β no escopo (x), e a mensagem de erro do
+-- underscore sugere que o proximo passo eh usar o construtor Pair.mk:
+
+def Pair.pure' (x : β) : Pair α β := Pair.mk _ x
+
+-- Mas nao tem um `α` disponivel. Como pure precisaria funcionar para todos
+-- os tipos possiveis α para definir uma instancia de `Applicative (Pair α)`,
+-- isso eh impossivel. Afinal, um chamador poderia escolher α para ser Empty,
+-- que nao tem valores.
+
+-- Nem todo Functor pode ser um Aplicative.
+
+
+-- 5.2.1. A Non-Monadic Applicative
