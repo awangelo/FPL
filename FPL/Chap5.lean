@@ -379,3 +379,293 @@ def Pair.pure' (x : β) : Pair α β := Pair.mk _ x
 
 
 -- 5.2.1. A Non-Monadic Applicative
+
+-- Ao validar input de usuario em um formulario, eh considerado melhor fornecer
+-- varios erros de uma vez. Isso permite que o usuario tenha uma visao geral do
+-- que eh necessario.
+
+-- Idealmente, validar input de usuario sera visivel no tipo da funcao que esta
+-- fazendo a validacao (deve retornar um datatype especifico). Verificar que uma
+-- caixa de texto contem um numero deve retornar um tipo numerico real, por
+-- exemplo. Uma rotina de validacao poderia lancar uma exception quando o input
+-- nao passa na validacao. Exceptions tem uma desvantagem importante: terminam
+-- o programa no primeiro erro, tornando impossivel acumular uma lista de erros.
+
+-- Por outro lado, o padrao comum de acumular uma lista de erros e entao falhar
+-- quando nao esta vazia tambem eh problematico. Uma longa sequencia aninhada de
+-- ifs que validam cada subsecao dos dados de input eh dificil de manter, e eh
+-- facil perder mensagens de erro. Idealmente, validacao pode ser realizada
+-- usando uma API que permite que um novo valor seja retornado e ainda
+-- automaticamente rastreia e acumula mensagens de erro.
+
+-- Um applicative functor chamado Validate fornece uma forma de implementar este
+-- estilo de API. Como o monad Except, Validate permite que um novo valor seja
+-- construido que caracteriza os dados validados com precisao. Diferente de
+-- Except, permite que multiplos erros sejam acumulados, sem risco de esquecer
+-- de verificar se a lista esta vazia.
+
+
+-- 5.2.1.1. User Input
+
+-- Como exemplo de input de usuario, considere a seguinte estrutura:
+
+structure RawInput where
+  name : String
+  birthYear : String
+
+-- A logica de negocio a ser implementada eh a seguinte:
+-- 1. O nome nao pode estar vazio
+-- 2. O ano de nascimento deve ser numerico e nao-negativo
+-- 3. O ano de nascimento deve ser maior que 1900, e menor ou igual ao ano
+--    em que o formulario eh validado
+
+-- Representar essas condicoes como um datatype requer um novo recurso, chamado
+-- subtypes. Com essa ferramenta em maos, um framework de validacao pode ser
+-- escrito que usa um applicative functor para rastrear erros, e essas regras
+-- podem ser implementadas no framework.
+
+
+-- 5.2.1.2. Subtypes
+
+-- Representar essas condicoes eh mais facil com um tipo adicional do Lean,
+-- chamado Subtype:
+
+#check Subtype
+#check GetElem
+
+-- Esta estrutura tem dois parametros de tipo: um parametro implicito que eh o
+-- tipo de dados α, e um parametro explicito p que eh um predicado sobre α. Um
+-- predicado eh uma declaracao logica com uma variavel que pode ser substituida
+-- por um valor para produzir uma declaracao real, como o parametro para GetElem
+-- que descreve o que significa para um indice estar in bounds para uma busca.
+-- No caso de Subtype, o predicado recorta algum subconjunto dos valores de α
+-- para os quais o predicado eh verdadeiro. Os dois campos da estrutura sao,
+-- respectivamente, um valor de α e evidencia de que o valor satisfaz o
+-- predicado p.
+
+-- Representar numeros positivos como tipos indutivos eh claro e facil de
+-- programar. No entanto, tem uma desvantagem chave. Embora Nat e Int tenham a
+-- estrutura de tipos indutivos comuns da perspectiva de programas Lean, o
+-- compilador os trata especialmente e usa bibliotecas de numeros de precisao
+-- arbitraria rapidas para implementa-los. Isso nao eh o caso para tipos
+-- adicionais definidos pelo usuario. No entanto, um subtype de Nat que o
+-- restringe a numeros nao-zero permite que o novo tipo use a representacao
+-- eficiente enquanto ainda descarta zero em tempo de compilacao:
+
+def FastPos : Type := {x : Nat // x > 0}
+
+-- O menor numero positivo rapido ainda eh um. Agora, em vez de ser um
+-- construtor de um tipo indutivo, eh uma instancia de uma estrutura construida
+-- com colchetes angulares. O primeiro argumento eh o Nat subjacente, e o
+-- segundo argumento eh a evidencia de que esse Nat eh maior que zero:
+
+def one : FastPos := ⟨1, by decide⟩
+
+-- A proposicao `1 > 0` eh decidivel, entao a tatic decide produz a evidencia
+-- necessaria. A instancia OfNat eh muito parecida com a de Pos, exceto que usa
+-- uma prova tatica curta para fornecer evidencia de que `n + 1 > 0`:
+
+instance : OfNat FastPos (n + 1) where
+  ofNat := ⟨n + 1, by simp⟩
+
+#check (1 : FastPos)
+
+-- Aqui, simp eh necessario porque decide requer valores concretos, mas a
+-- proposicao em questao eh `n + 1 > 0`.
+
+-- Subtypes sao uma espada de dois gumes. Permitem representacao eficiente de
+-- regras de validacao, mas transferem o fardo de manter essas regras para os
+-- usuarios da biblioteca, que tem que provar que nao estao violando invariantes
+-- importantes. Geralmente, eh uma boa ideia usa-los internamente a uma
+-- biblioteca, fornecendo uma API para usuarios que automaticamente garante que
+-- todos os invariantes sao satisfeitos, com quaisquer provas necessarias sendo
+-- internas a biblioteca.
+
+-- Verificar se um valor de tipo α esta no subtype `{x : α // p x}` geralmente
+-- requer que a proposicao `p x` seja decidivel. A secao sobre classes de
+-- igualdade e ordenacao descreve como proposicoes decidaveis podem ser usadas
+-- com if. Quando if eh usado com uma proposicao decidivel, um nome pode ser
+-- fornecido. No ramo then, o nome eh vinculado a evidencia de que a proposicao
+-- eh verdadeira, e no ramo else, eh vinculado a evidencia de que a proposicao
+-- eh falsa. Isso eh util ao verificar se um dado Nat eh positivo:
+
+def Nat.asFastPos? (n : Nat) : Option FastPos :=
+  if h : n > 0 then
+    some ⟨n, h⟩
+  else none
+
+-- No ramo then, h eh a evidencia de que `n > 0`, e esta evidencia pode ser
+-- usada como o segundo argumento para o construtor de Subtype.
+
+
+-- 5.2.1.3. Validated Input
+
+-- O input de usuario validado eh uma estrutura que expressa a logica de negocio
+-- usando multiplas tecnicas:
+-- 1. O tipo da estrutura em si codifica o ano em que foi verificado para
+--    validade, entao `CheckedInput 2019` nao eh o mesmo tipo que
+--    `CheckedInput 2020`
+-- 2. O ano de nascimento eh representado como Nat em vez de String
+-- 3. Subtypes sao usados para restringir os valores permitidos nos campos name
+--    e birthYear
+
+structure CheckedInput (thisYear : Nat) : Type where
+  name : {n : String // n ≠ ""}
+  birthYear : {y : Nat // y > 1900 ∧ y ≤ thisYear}
+
+-- Um validador de input deve receber o ano atual e um RawInput como argumentos,
+-- retornando ou um input verificado ou pelo menos uma falha de validacao. Isso
+-- eh representado pelo tipo Validate:
+
+structure NonEmptyList (α : Type) : Type where
+  head : α
+  tail : List α
+instance : HAppend (NonEmptyList α) (NonEmptyList α) (NonEmptyList α) where
+  hAppend xs ys := { head := xs.head, tail := xs.tail ++ ys.head :: ys.tail }
+
+inductive Validate (ε α : Type) : Type where
+  | ok : α → Validate ε α
+  | errors : NonEmptyList ε → Validate ε α
+
+-- Parece muito com Except. A unica diferenca eh que o construtor errors pode
+-- conter mais de uma falha.
+
+-- Validate eh um functor. Mapear uma funcao sobre ele transforma qualquer valor
+-- bem-sucedido que possa estar presente, assim como na instancia Functor para
+-- Except:
+
+instance : Functor (Validate ε) where
+  map f
+   | .ok x => .ok (f x)
+   | .errors errs => .errors errs
+
+-- A instancia Applicative para Validate tem uma diferenca importante da
+-- instancia para Except: enquanto a instancia para Except termina no primeiro
+-- erro encontrado, a instancia para Validate tem cuidado em acumular todos os
+-- erros tanto do ramo da funcao quanto do ramo do argumento:
+
+instance : Applicative (Validate ε) where
+  pure := .ok
+  seq f x :=
+    match f with
+    | .ok g => g <$> (x ())
+    | .errors errs =>
+      match x () with
+      -- Se ja ocorreram erros mas o atual eh correto, nao computa
+      | .ok _ => .errors errs
+      | .errors errs' => .errors (errs ++ errs')
+
+-- Usar .errors junto com o construtor para NonEmptyList eh um pouco verboso.
+-- Helpers como reportError tornam o codigo mais legivel. Nesta aplicacao,
+-- relatorios de erro consistirao de nomes de campo emparelhados com mensagens:
+
+def Field := String
+def InputError := (Field × String)
+
+def reportError (f : Field) (msg : String) : Validate InputError α :=
+  .errors { head := (f, msg), tail := [] }
+
+-- A instancia Applicative para Validate permite que os procedimentos de
+-- verificacao para cada campo sejam escritos independentemente e entao
+-- compostos. Verificar um nome consiste em garantir que uma string nao esta
+-- vazia, entao retornar evidencia deste fato na forma de um Subtype. Isso usa
+-- a versao de if que vincula evidencia:
+
+def checkName (name : String) :
+    Validate InputError {n : String // n ≠ ""} :=
+  if h : name = "" then
+    reportError "name" "Required"
+  else pure ⟨name, h⟩
+
+-- Certamente alguns erros de validacao tornam outras verificacoes impossiveis.
+-- Por exemplo, nao faz sentido verificar se o campo ano de nascimento eh maior
+-- que 1900 se um usuario confuso escreveu a palavra "syzygy" em vez de um
+-- numero. Verificar o intervalo permitido do numero so eh significativo apos
+-- garantir que o campo de fato contem um numero. Isso pode ser expresso usando
+-- a funcao andThen:
+
+def Validate.andThen (val : Validate ε α)
+    (next : α → Validate ε β) : Validate ε β :=
+  match val with
+  | .errors errs => .errors errs
+  | .ok x => next x
+-- `next` eh tipo um predicado.
+
+-- Embora a assinatura de tipo desta funcao a torne adequada para ser usada como
+-- bind em uma instancia Monad, ha boas razoes para nao fazer isso. Elas sao
+-- descritas na secao que descreve o contrato Applicative.
+
+-- Para verificar que o ano de nascimento eh um numero, uma funcao embutida
+-- chamada `String.toNat? : String → Option Nat` eh util. Eh mais amigavel ao
+-- usuario eliminar espacos em branco iniciais e finais primeiro usando
+-- String.trim:
+
+def checkYearIsNat (year : String) : Validate InputError Nat :=
+  match year.trim.toNat? with
+  | none => reportError "birth year" "Must be digits"
+  | some n => pure n
+
+-- Para verificar que o ano fornecido esta no intervalo esperado, usos aninhados
+-- da forma de if que fornece evidencia estao em ordem:
+
+def checkBirthYear (thisYear year : Nat) :
+    Validate InputError {y : Nat // y > 1900 ∧ y ≤ thisYear} :=
+  if h : year > 1900 then
+    if h' : year ≤ thisYear then
+      -- usa as todas hipoteses disponiveis em lemmas marcados com `[simp]`
+      pure ⟨year, by simp [*]⟩  -- [h, h']
+    else reportError "birth year" s!"Must be no later than {thisYear}"
+  else reportError "birth year" "Must be after 1900"
+
+-- Finalmente, esses tres componentes podem ser combinados usando <*>:
+
+def checkInput (year : Nat) (input : RawInput) :
+    Validate InputError (CheckedInput year) :=
+  pure CheckedInput.mk <*>
+    checkName input.name <*>
+    (checkYearIsNat input.birthYear).andThen fun birthYearAsNat =>
+      checkBirthYear year birthYearAsNat
+    -- Essa parte poderia ser encadeada com `>>=`, mas provavelmente vai ser
+    -- dito depois porque nao usar.
+
+-- Testar checkInput mostra que pode de fato retornar multiplos feedbacks:
+--
+instance [Repr α] : Repr (NonEmptyList α) where
+  reprPrec nel _ :=
+    s!"NonEmptyList.mk {repr nel.head} {repr nel.tail}"
+instance : Repr (CheckedInput year) where
+  reprPrec ci _ :=
+    s!"CheckedInput.mk (name := {repr ci.name.val}) (birthYear := {repr ci.birthYear.val})"
+--
+
+#eval checkInput 2023 {name := "David", birthYear := "1984"}
+
+#eval checkInput 2023 {name := "", birthYear := "2045"}
+
+#eval checkInput 2023 {name := "David", birthYear := "syzygy"}
+
+-- Validacao de formulario com checkInput ilustra uma vantagem chave de
+-- Applicative sobre Monad. Como >>= fornece poder suficiente para modificar o
+-- resto da execucao do programa baseado no valor do primeiro passo, deve
+-- receber um valor do primeiro passo para passar adiante. Se nenhum valor eh
+-- recebido (por exemplo, porque um erro ocorreu), entao >>= nao pode executar
+-- o resto do programa. Validate demonstra por que pode ser util executar o
+-- resto do programa de qualquer forma: em casos onde os dados anteriores nao
+-- sao necessarios, executar o resto do programa pode produzir informacoes uteis
+-- (neste caso, mais erros de validacao). O <*> de Applicative pode executar
+-- ambos seus argumentos antes de recombinar os resultados. Similarmente, >>=
+-- forca execucao sequencial. Cada passo deve completar antes que o proximo
+-- possa executar. Isso eh geralmente util, mas torna impossivel ter execucao
+-- paralela de threads diferentes que naturalmente emerge das dependencias de
+-- dados reais do programa. Uma abstracao mais poderosa como Monad aumenta a
+-- flexibilidade disponivel para o consumidor da API, mas diminui a
+-- flexibilidade disponivel para o implementador da API.
+
+-- Monad eh mais poderoso que Applicative. Decide com base nos valores
+-- anteriores. Nao pode ser paralelizado por causa disso.
+
+-- Applicative nao eh forcado a rodar sequencialmente. Eh mais flexivel por nao
+-- forcar continuidade.
+
+
+-- 5.3. The Applicative Contract
