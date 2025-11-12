@@ -669,3 +669,243 @@ instance : Repr (CheckedInput year) where
 
 
 -- 5.3. The Applicative Contract
+
+-- Assim como Functor, Monad, e tipos que implementam BEq e Hashable, Applicative
+-- tem um conjunto de regras que todas as instancias devem aderir.
+
+-- Ha quatro regras que um applicative functor deve seguir:
+
+-- 1. Deve respeitar identidade, entao `pure id <*> v = v`
+
+-- 2. Deve respeitar composicao de funcao, entao
+--    `pure (· ∘ ·) <*> u <*> v <*> w = u <*> (v <*> w)`
+
+-- 3. Sequenciar operacoes puras deve ser uma no-op, entao
+--    `pure f <*> pure x = pure (f x)`
+
+-- 4. A ordenacao de operacoes puras nao importa, entao
+--    `u <*> pure x = pure (fun f => f x) <*> u`
+
+-- Para verificar essas regras para a instancia Applicative Option, comece
+-- expandindo pure em some.
+
+-- A primeira regra declara que `some id <*> v = v`. A definicao de seq para
+-- Option declara que isso eh o mesmo que `id <$> v = v`, que eh uma das regras
+-- Functor que ja foram verificadas.
+
+-- A segunda regra declara que
+-- `some (· ∘ ·) <*> u <*> v <*> w = u <*> (v <*> w)`. Se qualquer um de u, v,
+-- ou w eh none, entao ambos os lados sao none, entao a propriedade eh valida.
+-- Assumindo que u eh `some f`, que v eh `some g`, e que w eh `some x`, entao
+-- isso eh equivalente a dizer que
+-- `some (· ∘ ·) <*> some f <*> some g <*> some x = some f <*> (some g <*> some x)`.
+-- Avaliar os dois lados produz o mesmo resultado:
+-- ⟹ some (· ∘ ·) <*> some f <*> some g <*> some x
+-- ⟹ some (f ∘ ·) <*> some g <*> some x
+-- ⟹ some (f ∘ g) <*> some x
+-- ⟹ some ((f ∘ g) x)
+-- ⟹ some (f (g x))
+-- ⟹ some f <*> (some g <*> some x)
+-- ⟹ some f <*> (some (g x))
+-- ⟹ some (f (g x))
+
+-- A terceira regra segue diretamente da definicao de seq:
+-- ⟹ some f <*> some x
+-- ⟹ f <$> some x
+-- ⟹ some (f x)
+
+-- No quarto caso, assuma que u eh `some f`, porque se eh none, ambos os lados
+-- da equacao sao none. `some f <*> some x` avalia diretamente para
+-- `some (f x)`, assim como `some (fun g => g x) <*> some f`.
+
+
+-- 5.3.1. All Applicatives are Functors
+
+-- Os dois operadores para Applicative sao suficientes para definir map:
+
+def mapFromApplicative [Applicative f] (g : α → β) (x : f α) : f β :=
+  pure g <*> x
+
+-- Isso so pode ser usado para implementar Functor se o contrato para Applicative
+-- garante o contrato para Functor. A primeira regra de Functor eh que
+-- `id <$> x = x`, que segue diretamente da primeira regra para Applicative. A
+-- segunda regra de Functor eh que `map (f ∘ g) x = map f (map g x)`.
+-- Desdobrando a definicao de map aqui resulta em
+-- `pure (f ∘ g) <*> x = pure f <*> (pure g <*> x)`. Usando a regra de que
+-- sequenciar operacoes puras eh uma no-op, o lado esquerdo pode ser reescrito
+-- para `pure (· ∘ ·) <*> pure f <*> pure g <*> x`. Esta eh uma instancia da
+-- regra que declara que applicative functors respeitam composicao de funcao.
+
+-- Isso justifica uma definicao de Applicative que estende Functor, com uma
+-- definicao padrao de map dada em termos de pure e seq:
+
+class Applicative' (f : Type → Type) extends Functor f where
+  pure : α → f α
+  seq : f (α → β) → (Unit → f α) → f β
+  map g x := seq (pure g) (fun () => x)
+
+-- Todo Applicative eh um Functor, e a implementacao padrao de map pode ser
+-- derivada de pure e seq.
+
+
+-- 5.3.2. All Monads are Applicative Functors
+
+-- Uma instancia de Monad ja requer uma implementacao de pure. Junto com bind,
+-- isso eh suficiente para definir seq:
+
+def seqFromMonad [Monad m] (f : m (α → β)) (x : Unit → m α) : m β := do
+  let g ← f
+  let y ← x ()
+  pure (g y)
+
+-- Mais uma vez, verificar que o contrato Monad implica o contrato Applicative
+-- permitira que isso seja usado como uma definicao padrao para seq se Monad
+-- estende Applicative.
+
+-- O resto desta secao consiste em um argumento de que esta implementacao de seq
+-- baseada em bind de fato satisfaz o contrato Applicative. Uma das coisas
+-- bonitas sobre programacao funcional eh que este tipo de argumento pode ser
+-- trabalhado em um pedaco de papel com um lapis, usando os tipos de regras de
+-- avaliacao da secao inicial sobre avaliar expressoes. Pensar sobre os
+-- significados das operacoes ao ler esses argumentos pode as vezes ajudar com
+-- o entendimento.
+
+-- Substituir do-notation com usos explicitos de >>= torna mais facil aplicar
+-- as regras Monad:
+
+def seqFromMonad' [Monad m] (f : m (α → β)) (x : Unit → m α) : m β :=
+  f >>= fun g =>
+  x () >>= fun y =>
+  pure (g y)
+
+-- Para verificar que esta definicao respeita identidade, verifique que
+-- `seq (pure id) (fun () => v) = v`. O lado esquerdo eh equivalente a
+-- `pure id >>= fun g => (fun () => v) () >>= fun y => pure (g y)`. A funcao
+-- unit no meio pode ser eliminada imediatamente, produzindo
+-- `pure id >>= fun g => v >>= fun y => pure (g y)`. Usando o fato de que pure
+-- eh uma identidade esquerda de >>=, isso eh o mesmo que
+-- `v >>= fun y => pure (id y)`, que eh `v >>= fun y => pure y`. Como
+-- `fun x => f x` eh o mesmo que `f`, isso eh o mesmo que `v >>= pure`, e o
+-- fato de que pure eh uma identidade direita de >>= pode ser usado para obter
+-- `v`.
+
+-- Este tipo de raciocinio informal pode ser tornado mais facil de ler com um
+-- pouco de reformatacao. No seguinte grafico, leia "EXPR1 ={ RAZAO }= EXPR2"
+-- como "EXPR1 eh o mesmo que EXPR2 porque RAZAO":
+
+-- ⟹ pure id >>= fun g => v >>= fun y => pure (g y)
+-- ={ pure eh identidade esquerda de >>= }=
+-- ⟹ v >>= fun y => pure (id y)
+-- ={ Reduz a chamada a id }=
+-- ⟹ v >>= fun y => pure y
+-- ={ fun x => f x eh o mesmo que f }=
+-- ⟹ v >>= pure
+-- ={ pure eh identidade direita de >>= }=
+-- ⟹ v
+
+-- ...
+
+-- Isso justifica uma definicao de Monad que estende Applicative, com uma
+-- definicao padrao de seq:
+
+class Monad' (m : Type → Type) extends Applicative m where
+  bind : m α → (α → m β) → m β
+  seq f x :=
+    bind f fun g =>
+    bind (x ()) fun y =>
+    pure (g y)
+
+-- A propria definicao padrao de map de Applicative significa que toda instancia
+-- Monad automaticamente gera instancias Applicative e Functor tambem.
+
+-- Resumo da hierarquia:
+-- Functor ⊂ Applicative ⊂ Monad
+--
+-- * Todo Monad eh um Applicative (seq pode ser derivado de bind e pure)
+-- * Todo Applicative eh um Functor (map pode ser derivado de pure e seq)
+
+
+-- 5.3.3. Additional Stipulations
+
+-- Alem de aderir aos contratos individuais associados a cada type class,
+-- implementacoes combinadas de Functor, Applicative e Monad devem funcionar
+-- de forma equivalente a essas implementacoes padrao. Em outras palavras, um
+-- tipo que fornece instancias tanto de Applicative quanto de Monad nao deve
+-- ter uma implementacao de seq que funciona diferentemente da versao que a
+-- instancia Monad gera como implementacao padrao. Isso eh importante porque
+-- funcoes polimorficas podem ser refatoradas para substituir um uso de >>= com
+-- um uso equivalente de <*>, ou um uso de <*> com um uso equivalente de >>=.
+-- Esta refatoracao nao deve mudar o significado de programas que usam este
+-- codigo.
+
+-- Esta regra explica por que Validate.andThen nao deve ser usado para
+-- implementar bind em uma instancia Monad. Por si so, obedece o contrato monad.
+-- No entanto, quando eh usado para implementar seq, o comportamento nao eh
+-- equivalente ao seq em si. Para ver onde diferem, considere o exemplo de duas
+-- computacoes, ambas retornando erros. Comece com um exemplo de um caso onde
+-- dois erros deveriam ser retornados, um da validacao de uma funcao (que
+-- poderia muito bem ter resultado de um argumento anterior para a funcao), e
+-- um da validacao de um argumento:
+
+def notFun : Validate String (Nat → String) :=
+  .errors { head := "First error", tail := [] }
+
+def notArg : Validate String Nat :=
+  .errors { head := "Second error", tail := [] }
+
+-- Combina-los com a versao de <*> da instancia Applicative de Validate resulta
+-- em ambos os erros sendo reportados ao usuario:
+
+#eval notFun <*> notArg
+-- ⟹
+-- match notFun with
+-- | .ok g => g <$> notArg
+-- | .errors errs =>
+--   match notArg with
+--   | .ok _ => .errors errs
+--   | .errors errs' => .errors (errs ++ errs')
+-- ⟹
+-- match notArg with
+-- | .ok _ => .errors { head := "First error", tail := [] }
+-- | .errors errs' => .errors ({ head := "First error", tail := [] } ++ errs')
+-- ⟹
+-- .errors ({ head := "First error", tail := [] } ++
+--          { head := "Second error", tail := []})
+-- ⟹
+-- .errors { head := "First error", tail := ["Second error"] }
+
+-- Usando a versao de seq que foi implementada com >>=, aqui reescrita para
+-- andThen, resulta em apenas o primeiro erro estar disponivel:
+
+#eval Seq.seq notFun (fun () => notArg)
+-- ⟹
+-- notFun.andThen fun g =>
+-- notArg.andThen fun y =>
+-- pure (g y)
+-- ⟹
+-- match notFun with
+-- | .errors errs => .errors errs
+-- | .ok val =>
+--   (fun g =>
+--     notArg.andThen fun y =>
+--     pure (g y)) val
+-- ⟹
+-- .errors { head := "First error", tail := [] }
+
+-- * Usando `<*>` diretamente: acumula todos os erros.
+-- * Usando `>>=` (que seria andThen): para no primeiro erro.
+
+-- Isso violaria a regra de que "refatorar entre <*> e >>= nao deve mudar o
+-- comportamento". Por isso Validate NAO deve ter uma instancia Monad - eh
+-- apenas um Applicative.
+
+-- * Validate eh um Applicative que acumula erros
+-- * Validate.andThen parece bind, mas nao acumula erros
+-- * Se fizessemos Validate um Monad com andThen como bind, violariamos a
+--   consistencia entre Applicative e Monad.
+
+
+-- 5.4. Alternatives
+
+
+-- 5.4.1. Recovery from Failure
